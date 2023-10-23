@@ -1,0 +1,2 @@
+# Use ahash::{HashMap, HashMapExt, HashSet, HashSetExt} instead of the standard HashMap/Set implementations
+disallowed-types = ["std::collections::HashMap", "std::collections::HashSet"]
