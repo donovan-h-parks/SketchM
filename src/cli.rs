@@ -50,11 +50,11 @@ pub struct SketchArgs {
 #[derive(Parser)]
 pub struct DistArgs {
     /// Query genome sketches
-    #[arg(short, long)]
+    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
     pub query_sketches: Vec<String>,
 
     /// Reference genome sketches
-    #[arg(short, long)]
+    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
     pub reference_sketches: Vec<String>,
 
     /// Output file [default: stdout]

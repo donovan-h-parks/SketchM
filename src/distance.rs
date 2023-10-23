@@ -3,15 +3,16 @@ use std::io::stdout;
 use std::fs::File;
 use std::path::Path;
 use std::io::Write;
+use std::sync::Mutex;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use log::info;
-use num_format::ToFormattedString;
+use rayon::iter::{ParallelIterator, IntoParallelRefIterator};
 
 use crate::hashing::ItemHash;
 use crate::sketch::{read_sketch, Sketch, SketchHeader};
-use crate::config::LOCALE;
+use crate::progress::progress_bar;
 
 /// Statistics for the distance between two sketches.
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,7 +47,6 @@ pub fn calc_sketch_distances(
 
         query_sketches.extend(sketches);
     }
-    info!(" - read {} query sketches", query_sketches.len().to_formatted_string(&LOCALE));
 
     // load all reference sketches into memory
     info!("Loading reference sketches into memory:");
@@ -59,10 +59,9 @@ pub fn calc_sketch_distances(
 
         ref_sketches.extend(sketches);
     }
-    info!(" - read {} reference sketches", ref_sketches.len().to_formatted_string(&LOCALE));
 
     // create writer
-    let writer: Box<dyn Write> = match output_file {
+    let writer: Box<dyn Write + Send> = match output_file {
         Some(output_file) => {
             let out_path = Path::new(output_file);
             Box::new(File::create(out_path)?)
@@ -72,18 +71,29 @@ pub fn calc_sketch_distances(
         }
     };
 
-    let mut writer = csv::WriterBuilder::new().delimiter(b'\t').from_writer(writer);
+    let writer = csv::WriterBuilder::new().delimiter(b'\t').from_writer(writer);
     
     // calculate statistics between query and reference sketches
+    info!("Calculating ANI between query and reference sketches:");
+    let progress_bar = progress_bar(query_sketches.len() as u64 * ref_sketches.len() as u64);
+    let safe_writer = Mutex::new(writer);
+
     let k = prev_sketch_header.expect("Invalid sketch header").params.k();
     for query_sketch in &query_sketches {
-        for ref_sketch in &ref_sketches {
+        ref_sketches.par_iter().for_each(|ref_sketch| {
             let dist_stats = distance(query_sketch, ref_sketch, k);
             if f32::max(dist_stats.ani_query, dist_stats.ani_ref) >= min_ani as f32 {
-                writer.serialize(dist_stats)?;
+                safe_writer
+                    .lock()
+                    .expect("Failed to obtain writer")
+                    .serialize(dist_stats)
+                    .expect("Failed to write sketch to file")
             }
-        }
+            progress_bar.inc(1);
+        });
     }
+
+    progress_bar.finish();
 
     Ok(())
 }
@@ -129,15 +139,22 @@ pub fn raw_distance(
         }
     }
 
-    // calculate distance statistics
-    let containment_query = num_common_hashes as f32 / query_hashes.len() as f32;
-    let containment_ref = num_common_hashes as f32 / ref_hashes.len() as f32;
+    let mut containment_query = 0.0f32;
+    let mut containment_ref = 0.0f32;
+    let mut ani_query = 0.0f32;
+    let mut ani_ref = 0.0f32;
 
-    // determine ANI from containment 
-    // see Hera et al., 2023, Genome Research
-    let exp = 1.0 / k as f32;
-    let ani_query = 100.0 * containment_query.powf(exp);
-    let ani_ref = 100.0 * containment_ref.powf(exp);
+    if num_common_hashes > 0 {
+        // calculate containment of query relative to reference, and reference relative to query
+        containment_query = num_common_hashes as f32 / query_hashes.len() as f32;
+        containment_ref = num_common_hashes as f32 / ref_hashes.len() as f32;
+
+        // determine ANI from containment 
+        // see Hera et al., 2023, Genome Research
+        let exp = 1.0 / k as f32;
+        ani_query = 100.0 * containment_query.powf(exp);
+        ani_ref = 100.0 * containment_ref.powf(exp);
+    }
 
     SketchDistance {
         query_id: query_name.to_string(),

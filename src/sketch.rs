@@ -138,11 +138,15 @@ pub fn read_sketch(sketch_file: &str) -> Result<(SketchHeader, Vec<Sketch>)> {
 
     let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
 
+    let progress_bar = progress_bar(sketch_header.num_sketches as u64);
     let mut sketches: Vec<Sketch> = Vec::new();
     for _ in 0..sketch_header.num_sketches {
         let sketch: Sketch = bincode::deserialize_from(&mut reader)?;
         sketches.push(sketch);
+        progress_bar.inc(1);
     }
+
+    progress_bar.finish();
 
     Ok((sketch_header, sketches))
 }
