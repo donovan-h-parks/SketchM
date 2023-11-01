@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Mutex;
+use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use bincode;
@@ -44,14 +45,94 @@ pub struct Sketch {
 }
 
 impl Sketch {
-    pub fn len(&self) -> usize {
-        self.hashes.len()
+    pub fn hash_count(&self) -> u64 {
+        self.hashes.len() as u64
     }
 
     pub fn is_empty(&self) -> bool {
         self.hashes.is_empty()
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WeightedSketch {
+    pub name: String,
+    pub bp_count: u64,
+    pub kmer_total_count: u64,
+    pub hashes: BTreeMap<ItemHash, u32>,
+}
+
+impl WeightedSketch {
+    pub fn unique_hash_count(&self) -> u64 {
+        self.hashes.len() as u64
+    }
+
+    pub fn weighted_hash_count(&self) -> u64 {
+        self.hashes.values().map(|v| *v as u64).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
+}
+
+pub enum SketchType {
+    Unweighted(Sketch),
+    Weighted(WeightedSketch),
+}
+
+impl SketchType {
+    /// An iterator through hash values and their associated weights.
+    pub fn hash_iter(&self) -> Box<dyn ExactSizeIterator<Item=(&u64, &u32)> + '_> {
+        match *self {
+            SketchType::Unweighted(ref sketch) => Box::new(sketch.hashes.iter().map(|hash| (hash, &1))),
+            SketchType::Weighted(ref sketch) => Box::new(sketch.hashes.iter())
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            SketchType::Unweighted(sketch) => &sketch.name,
+            SketchType::Weighted(sketch) => &sketch.name,
+        }
+    }
+
+    pub fn unique_hash_count(&self) -> u64 {
+        match self {
+            SketchType::Unweighted(sketch) => sketch.hash_count(),
+            SketchType::Weighted(sketch) => sketch.unique_hash_count(),
+        }
+    }
+
+    pub fn weighted_hash_count(&self) -> u64 {
+        match self {
+            SketchType::Unweighted(sketch) => sketch.hash_count(),
+            SketchType::Weighted(sketch) => sketch.weighted_hash_count(),
+        }
+    }
+
+    pub fn bp_count(&self) -> u64 {
+        match self {
+            SketchType::Unweighted(sketch) => sketch.bp_count,
+            SketchType::Weighted(sketch) => sketch.bp_count,
+        }
+    }
+
+    pub fn kmer_total_count(&self) -> u64 {
+        match self {
+            SketchType::Unweighted(sketch) => sketch.kmer_total_count,
+            SketchType::Weighted(sketch) => sketch.kmer_total_count,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            SketchType::Unweighted(sketch) => sketch.is_empty(),
+            SketchType::Weighted(sketch) => sketch.is_empty(),
+        }
+    }
+}
+
 
 /// Write sketch header information.
 fn write_sketch_header<W>(writer: &mut W, num_sketches: u32, sketch_params: &SketchParams) -> Result<()>
@@ -130,7 +211,7 @@ pub fn sketch_file(seq_file: &SeqFile, sketch_params: &SketchParams) -> Result<S
 }
 
 /// Read sketches.
-pub fn read_sketch(sketch_file: &str) -> Result<(SketchHeader, Vec<Sketch>)> {
+pub fn read_sketch(sketch_file: &str) -> Result<(SketchHeader, Vec<SketchType>)> {
     let mut reader = maybe_gzip_reader(sketch_file).context(format!(
         "Unable to read sketch file: {}",
         sketch_file
@@ -139,10 +220,10 @@ pub fn read_sketch(sketch_file: &str) -> Result<(SketchHeader, Vec<Sketch>)> {
     let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
 
     let progress_bar = progress_bar(sketch_header.num_sketches as u64);
-    let mut sketches: Vec<Sketch> = Vec::new();
+    let mut sketches: Vec<SketchType> = Vec::new();
     for _ in 0..sketch_header.num_sketches {
         let sketch: Sketch = bincode::deserialize_from(&mut reader)?;
-        sketches.push(sketch);
+        sketches.push(SketchType::Unweighted(sketch));
         progress_bar.inc(1);
     }
 

@@ -34,12 +34,16 @@ pub struct SketchArgs {
     #[arg(short, long, required = true)]
     pub output_file: String,
 
+    /// Generated sketch indicating number of times each k-mer occurs
+    #[arg(short, long)]
+    pub weighted: bool,
+
     /// Length of k-mers to use
     #[arg(short, long, default_value_t = 31, value_parser = validate_kmer_length)]
     pub kmer_length: u8,
 
     /// Sketch scaling factor
-    #[arg(long, default_value_t = 1000)]
+    #[arg(short, long, default_value_t = 1000)]
     pub scale: u64,
 
     /// Number of threads to use

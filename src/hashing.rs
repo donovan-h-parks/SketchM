@@ -29,7 +29,7 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 pub type ItemHash = u64;
 
@@ -73,7 +73,7 @@ pub fn tw_hash64(kmer: ItemHash) -> ItemHash {
 
 /// Determine hashes in sequence satisfying maximum k-mer hash criterion.
 // Modified from the fmh_seeds method by Jim Shaw in skani.
-pub fn dna_hashes(seq: &[u8], hashes: &mut BTreeSet<u64>, max_hash: ItemHash, k: u8) {
+pub fn dna_hashes(seq: &[u8], hashes: &mut BTreeMap<ItemHash, u32>, max_hash: ItemHash, k: u8) {
     let k = k as usize;
 
     if seq.len() < k {
@@ -114,7 +114,8 @@ pub fn dna_hashes(seq: &[u8], hashes: &mut BTreeSet<u64>, max_hash: ItemHash, k:
 
         let hash = tw_hash64(canonical_kmer_marker);
         if hash < max_hash {
-            hashes.insert(hash);
+            let count = hashes.entry(hash).or_insert(0);
+            *count = count.saturating_add(1);
         }
     }
 }

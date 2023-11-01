@@ -7,6 +7,7 @@ use crate::frac_min_hash::FracMinHash;
 pub struct SketchParams {
     kmer_length: u8,
     scale: u64,
+    weighted: bool,
 }
 
 impl Default for SketchParams {
@@ -14,13 +15,14 @@ impl Default for SketchParams {
         SketchParams {
             kmer_length: 31,
             scale: 1000,
+            weighted: false,
         }
     }
 }
 
 impl SketchParams {
-    pub fn new(kmer_length: u8, scale: u64) -> Self {
-        SketchParams { kmer_length, scale }
+    pub fn new(kmer_length: u8, scale: u64, weighted: bool) -> Self {
+        SketchParams { kmer_length, scale, weighted }
     }
 
     pub fn create_sketcher(&self) -> FracMinHash {
@@ -33,6 +35,10 @@ impl SketchParams {
 
     pub fn scale(&self) -> u64 {
         self.scale
+    }
+
+    pub fn weighted(&self) -> bool {
+        self.weighted
     }
 
     /// Return true if sketch parameters are identical.
@@ -55,6 +61,16 @@ impl SketchParams {
                 "Sketch has scale = {}, but other sketch has scale = {}",
                 self.scale(),
                 other.scale()
+            );
+        }
+
+        // It is possible to convert a weighted sketch into an unweighted sketch,
+        // but this conversion is not currently supported.
+        if self.weighted() != other.weighted() {
+            bail!(
+                "Sketch has weighted = {}, but other sketch has weighted = {}",
+                self.weighted(),
+                other.weighted()
             );
         }
 

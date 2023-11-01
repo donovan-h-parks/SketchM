@@ -169,7 +169,7 @@ fn run_sketch(args: &cli::SketchArgs) -> Result<()> {
         std::fs::create_dir_all(out_path)?;
     }
 
-    let sketch_params = SketchParams::new(args.kmer_length, args.scale);
+    let sketch_params = SketchParams::new(args.kmer_length, args.scale, args.weighted);
 
     sketch(&input_genome_files, &sketch_params, &out_file)?;
 
@@ -202,16 +202,25 @@ fn run_info(args: &cli::InfoArgs) -> Result<()> {
     }
 
     let mut sketch_info = Vec::new();
+
+    let mut genome_size_mean = 0.0f32;
+    let mut hash_count_mean = 0.0f32;
+    let scale_factor = 1.0 / sketches.len() as f32;
     for sketch in sketches {
         sketch_info.push(SketchInfo {
-            name: sketch.name.clone(),
-            bp_count: sketch.bp_count,
-            kmer_total_count: sketch.kmer_total_count,
-            sketch_hash_count: sketch.len() as u64,
+            name: sketch.name().to_string(),
+            bp_count: sketch.bp_count(),
+            kmer_total_count: sketch.kmer_total_count(),
+            sketch_hash_count: sketch.unique_hash_count(),
             k: sketch_header.params.k(),
             scale: sketch_header.params.scale(),
         });
+
+        genome_size_mean += scale_factor * sketch.bp_count() as f32;
+        hash_count_mean += scale_factor * sketch.unique_hash_count() as f32;
     }
+    info!("Average genome size: {:.1}", genome_size_mean);
+    info!("Average hash count: {:.1}", hash_count_mean);
 
     output_results(&sketch_info, &args.output_file)?;
 

@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 use log::info;
 use rayon::iter::{ParallelIterator, IntoParallelRefIterator};
 
-use crate::hashing::ItemHash;
-use crate::sketch::{read_sketch, Sketch, SketchHeader};
+use crate::sketch::{read_sketch, SketchType, SketchHeader};
 use crate::progress::progress_bar;
 
 /// Statistics for the distance between two sketches.
@@ -19,6 +18,7 @@ use crate::progress::progress_bar;
 pub struct SketchDistance {
     pub query_id: String,
     pub ref_id: String,
+    pub ani_jaccard: f32,
     pub ani_query: f32,
     pub ani_ref: f32,
     pub containment_query: f32,
@@ -99,12 +99,12 @@ pub fn calc_sketch_distances(
 }
 
 /// Calculate distance statistics between two sketches.
-pub fn distance(query_sketch: &Sketch, ref_sketch: &Sketch, k: u8) -> SketchDistance {
+pub fn distance(query_sketch: &SketchType, ref_sketch: &SketchType, k: u8) -> SketchDistance {
     raw_distance(
-        &query_sketch.hashes,
-        &ref_sketch.hashes,
-        &query_sketch.name,
-        &ref_sketch.name,
+        query_sketch,
+        ref_sketch,
+        query_sketch.name(),
+        ref_sketch.name(),
         k
     )
 }
@@ -114,17 +114,17 @@ pub fn distance(query_sketch: &Sketch, ref_sketch: &Sketch, k: u8) -> SketchDist
 /// If the hash values are not sorted the calculated distance statistics are 
 /// invalid. Currently, this constraint is enforced when creating the sketch.
 pub fn raw_distance(
-    query_hashes: &[ItemHash],
-    ref_hashes: &[ItemHash],
+    query_hashes: &SketchType,
+    ref_hashes: &SketchType,
     query_name: &str,
     ref_name: &str,
     k: u8,
 ) -> SketchDistance {
     let mut num_common_hashes: u64 = 0;
-    let mut q_iter = query_hashes.iter().peekable();
-    let mut r_iter = ref_hashes.iter().peekable();
+    let mut q_iter = query_hashes.hash_iter().peekable();
+    let mut r_iter = ref_hashes.hash_iter().peekable();
     while let (Some(q_hash), Some(r_hash)) = (q_iter.peek(), r_iter.peek()) {
-        match q_hash.cmp(r_hash) {
+        match q_hash.0.cmp(r_hash.0) {
             Ordering::Less => {
                 q_iter.next();
             }
@@ -139,15 +139,22 @@ pub fn raw_distance(
         }
     }
 
+    let mut ani_jaccard = 0.0f32;
     let mut containment_query = 0.0f32;
     let mut containment_ref = 0.0f32;
     let mut ani_query = 0.0f32;
     let mut ani_ref = 0.0f32;
 
     if num_common_hashes > 0 {
+        // calculate Jaccard index based ANI estimate
+        let total_hashes = (query_hashes.unique_hash_count() + ref_hashes.unique_hash_count()) as u64 - num_common_hashes;
+        let jaccard = num_common_hashes as f32 / total_hashes as f32;
+        let mash_distance = -1.0 * ((2.0 * jaccard) / (1.0 + jaccard)).ln() / k as f32;
+        ani_jaccard = 100.0 * (1.0 - mash_distance);
+        
         // calculate containment of query relative to reference, and reference relative to query
-        containment_query = num_common_hashes as f32 / query_hashes.len() as f32;
-        containment_ref = num_common_hashes as f32 / ref_hashes.len() as f32;
+        containment_query = num_common_hashes as f32 / query_hashes.unique_hash_count() as f32;
+        containment_ref = num_common_hashes as f32 / ref_hashes.unique_hash_count() as f32;
 
         // determine ANI from containment 
         // see Hera et al., 2023, Genome Research
@@ -159,6 +166,7 @@ pub fn raw_distance(
     SketchDistance {
         query_id: query_name.to_string(),
         ref_id: ref_name.to_string(),
+        ani_jaccard,
         ani_query,
         ani_ref,
         containment_query,
