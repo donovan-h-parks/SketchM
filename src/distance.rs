@@ -147,7 +147,7 @@ pub fn raw_distance(
 
     if num_common_hashes > 0 {
         // calculate Jaccard index based ANI estimate
-        let total_hashes = (query_hashes.unique_hash_count() + ref_hashes.unique_hash_count()) as u64 - num_common_hashes;
+        let total_hashes = query_hashes.unique_hash_count() + ref_hashes.unique_hash_count() - num_common_hashes;
         let jaccard = num_common_hashes as f32 / total_hashes as f32;
         let mash_distance = -1.0 * ((2.0 * jaccard) / (1.0 + jaccard)).ln() / k as f32;
         ani_jaccard = 100.0 * (1.0 - mash_distance);
