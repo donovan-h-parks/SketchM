@@ -8,15 +8,16 @@ use std::time::Instant;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::info;
+use maybe_gzip_io::maybe_gzip_reader;
 use num_format::ToFormattedString;
 use serde::Serialize;
 
 use crate::cli::{Cli, Commands};
 use crate::config::LOCALE;
-use crate::distance::calc_sketch_distances;
+use crate::distance::{calc_sketch_distances, calc_weighted_sketch_distances};
 use crate::genome::read_genome_path_file;
 use crate::logging::setup_logger;
-use crate::sketch::{read_sketch, sketch, SeqFile, SKETCH_EXT};
+use crate::sketch::{read_sketch, sketch, SeqFile, SketchHeader, SKETCH_EXT};
 use crate::sketch_params::SketchParams;
 
 mod cli;
@@ -179,12 +180,33 @@ fn run_sketch(args: &cli::SketchArgs) -> Result<()> {
 fn run_dist(args: &cli::DistArgs) -> Result<()> {
     init(args.threads)?;
 
-    calc_sketch_distances(
-        &args.query_sketches,
-        &args.reference_sketches,
-        args.min_ani,
-        &args.output_file,
-    )?;
+    // read sketch header to determine if we should
+    // calculate unweighted or weighted distances
+    let mut reader = maybe_gzip_reader(&args.query_sketches[0]).context(format!(
+        "Unable to read sketch file: {}",
+        &args.query_sketches[0]
+    ))?;
+
+    let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
+
+    // calculate distances between sketches
+    if sketch_header.params.weighted() {
+        info!("Calculating weighted distances between sketches.");
+        calc_weighted_sketch_distances(
+            &args.query_sketches,
+            &args.reference_sketches,
+            args.min_ani,
+            &args.output_file,
+        )?;
+    } else {
+        info!("Calculating unweighted distances between sketches.");
+        calc_sketch_distances(
+            &args.query_sketches,
+            &args.reference_sketches,
+            args.min_ani,
+            &args.output_file,
+        )?;
+    }
 
     Ok(())
 }
@@ -200,31 +222,46 @@ fn run_info(args: &cli::InfoArgs) -> Result<()> {
         name: String,
         bp_count: u64,
         kmer_total_count: u64,
-        sketch_hash_count: u64,
+        unique_hash_count: u64,
+        weighted_hash_count: u64,
         k: u8,
         scale: u64,
+        weighted: bool,
     }
 
     let mut sketch_info = Vec::new();
 
     let mut genome_size_mean = 0.0f32;
-    let mut hash_count_mean = 0.0f32;
+    let mut unique_hash_count_mean = 0.0f32;
+    let mut weighted_hash_count_mean = 0.0f32;
     let scale_factor = 1.0 / sketches.len() as f32;
     for sketch in sketches {
         sketch_info.push(SketchInfo {
             name: sketch.name().to_string(),
             bp_count: sketch.bp_count(),
             kmer_total_count: sketch.kmer_total_count(),
-            sketch_hash_count: sketch.unique_hash_count(),
+            unique_hash_count: sketch.unique_hash_count(),
+            weighted_hash_count: sketch.weighted_hash_count(),
             k: sketch_header.params.k(),
             scale: sketch_header.params.scale(),
+            weighted: sketch_header.params.weighted(),
         });
 
         genome_size_mean += scale_factor * sketch.bp_count() as f32;
-        hash_count_mean += scale_factor * sketch.unique_hash_count() as f32;
+        unique_hash_count_mean += scale_factor * sketch.unique_hash_count() as f32;
+        weighted_hash_count_mean += scale_factor * sketch.weighted_hash_count() as f32;
     }
+
+    info!("K: {}", sketch_header.params.k());
+    info!("Scale: {}", sketch_header.params.scale());
+    info!("Weighted: {}", sketch_header.params.weighted());
+
     info!("Average genome size: {:.1}", genome_size_mean);
-    info!("Average hash count: {:.1}", hash_count_mean);
+    info!("Average unique hash count: {:.1}", unique_hash_count_mean);
+    info!(
+        "Average weighted hash count: {:.1}",
+        weighted_hash_count_mean
+    );
 
     output_results(&sketch_info, &args.output_file)?;
 

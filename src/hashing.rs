@@ -198,41 +198,34 @@ mod tests {
     #[test]
     fn test_canonical_kmer() {
         let mut hashes = BTreeMap::new();
-
         dna_hashes(b"AAAAAAAA", &mut hashes, u64::MAX, 4);
-        assert_eq!(hashes.len(), 5);
-        for (hash, _count) in hashes {
-            assert_eq!(tw_hash64(0), hash);
-        }
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.get(&tw_hash64(0)), Some(&5));
 
-        hashes.clear();
+        let mut hashes = BTreeMap::new();
         dna_hashes(b"TTTTTTTT", &mut hashes, u64::MAX, 4);
-        assert_eq!(hashes.len(), 5);
-        for (hash, _count) in hashes {
-            assert_eq!(tw_hash64(0), hash);
-        }
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.get(&tw_hash64(0)), Some(&5));
 
-        hashes.clear();
+        let mut hashes = BTreeMap::new();
         dna_hashes(b"CCCCCCCC", &mut hashes, u64::MAX, 4);
-        assert_eq!(hashes.len(), 5);
-        for (hash, _count) in hashes {
-            assert_eq!(tw_hash64(85), hash);
-        }
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.get(&tw_hash64(85)), Some(&5));
 
-        hashes.clear();
+        let mut hashes = BTreeMap::new();
         dna_hashes(b"GGGGGGGG", &mut hashes, u64::MAX, 4);
-        assert_eq!(hashes.len(), 5);
-        for (hash, _count) in hashes {
-            assert_eq!(tw_hash64(85), hash);
-        }
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.get(&tw_hash64(85)), Some(&5));
     }
 
     #[test]
     fn test_simple_seq() {
         let mut hashes = BTreeMap::new();
-
         dna_hashes(b"ACGTACGT", &mut hashes, u64::MAX, 4);
-        assert_eq!(hashes.len(), 5);
 
         // kmer | rev  | smallest | binary    | decimal
         // ACGT | ACGT | ACGT     | 00011011b | 27
@@ -241,42 +234,44 @@ mod tests {
         // TACG | CGTA | CGTA     | 01101100b | 108
         // ACGT | ACGT | ACGT     | 00011011b | 27
 
-        let hashes: Vec<ItemHash> = hashes.into_keys().collect();
-        assert_eq!(tw_hash64(27), hashes[0]);
-        assert_eq!(tw_hash64(108), hashes[1]);
-        assert_eq!(tw_hash64(177), hashes[2]);
-        assert_eq!(tw_hash64(108), hashes[3]);
-        assert_eq!(tw_hash64(27), hashes[4]);
+        assert_eq!(hashes.len(), 3);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
+
+        assert_eq!(hashes.get(&tw_hash64(27)), Some(&2));
+        assert_eq!(hashes.get(&tw_hash64(108)), Some(&2));
+        assert_eq!(hashes.get(&tw_hash64(177)), Some(&1));
     }
 
     #[test]
     fn test_mixed_case_seq() {
+        // should produce same restul as test_simple_seq()
+
         let mut hashes = BTreeMap::new();
+        dna_hashes(b"AcgTaCGt", &mut hashes, u64::MAX, 4);
 
-        dna_hashes(b"NCGTnCGT", &mut hashes, u64::MAX, 4);
-        assert_eq!(hashes.len(), 5);
+        assert_eq!(hashes.len(), 3);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
 
-        let hashes: Vec<ItemHash> = hashes.into_keys().collect();
-        assert_eq!(tw_hash64(27), hashes[0]);
-        assert_eq!(tw_hash64(108), hashes[1]);
-        assert_eq!(tw_hash64(177), hashes[2]);
-        assert_eq!(tw_hash64(108), hashes[3]);
-        assert_eq!(tw_hash64(27), hashes[4]);
+        assert_eq!(hashes.get(&tw_hash64(27)), Some(&2));
+        assert_eq!(hashes.get(&tw_hash64(108)), Some(&2));
+        assert_eq!(hashes.get(&tw_hash64(177)), Some(&1));
     }
 
     #[test]
     fn test_ambiguous_bases() {
         // Ambiguous bases are treated as an A; a common convention
-        // in high performance bioinformatic software.
+        // in high performance bioinformatic software. Should produce
+        // same results as test_simple_seq().
 
-        let hashes = dna_hashes(b"AcgTaCGt", u64::MAX, 4);
-        assert_eq!(hashes.len(), 5);
+        let mut hashes = BTreeMap::new();
+        dna_hashes(b"NCGTnCGT", &mut hashes, u64::MAX, 4);
 
-        assert_eq!(tw_hash64(27), hashes[0]);
-        assert_eq!(tw_hash64(108), hashes[1]);
-        assert_eq!(tw_hash64(177), hashes[2]);
-        assert_eq!(tw_hash64(108), hashes[3]);
-        assert_eq!(tw_hash64(27), hashes[4]);
+        assert_eq!(hashes.len(), 3);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
+
+        assert_eq!(hashes.get(&tw_hash64(27)), Some(&2));
+        assert_eq!(hashes.get(&tw_hash64(108)), Some(&2));
+        assert_eq!(hashes.get(&tw_hash64(177)), Some(&1));
     }
 
     #[test]
@@ -292,55 +287,56 @@ mod tests {
         assert_eq!(tw_hash64(108), 13364770925836396135);
         assert_eq!(tw_hash64(177), 8958356766268387398);
 
-        let hashes = dna_hashes(b"ACGTACGT", 8958356766268387398, 4);
+        let mut hashes = BTreeMap::new();
+        dna_hashes(b"ACGTACGT", &mut hashes, 8958356766268387398, 4);
         assert_eq!(hashes.len(), 0);
+        assert_eq!(hashes.values().sum::<u32>(), 0);
 
-        let hashes = dna_hashes(b"ACGTACGT", 8958356766268387398 + 1, 4);
+        let mut hashes = BTreeMap::new();
+        dna_hashes(b"ACGTACGT", &mut hashes, 8958356766268387398 + 1, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(tw_hash64(177), hashes[0]);
+        assert_eq!(hashes.values().sum::<u32>(), 1);
 
-        let hashes = dna_hashes(b"ACGTACGT", 12564563040126408309, 4);
+        let mut hashes = BTreeMap::new();
+        dna_hashes(b"ACGTACGT", &mut hashes, 12564563040126408309, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(tw_hash64(177), hashes[0]);
+        assert_eq!(hashes.values().sum::<u32>(), 1);
 
-        let hashes = dna_hashes(b"ACGTACGT", 12564563040126408309 + 1, 4);
+        let mut hashes = BTreeMap::new();
+        dna_hashes(b"ACGTACGT", &mut hashes, 12564563040126408309 + 1, 4);
+        assert_eq!(hashes.len(), 2);
+        assert_eq!(hashes.values().sum::<u32>(), 3);
+
+        let mut hashes = BTreeMap::new();
+        dna_hashes(b"ACGTACGT", &mut hashes, 13364770925836396135, 4);
+        assert_eq!(hashes.len(), 2);
+        assert_eq!(hashes.values().sum::<u32>(), 3);
+
+        let mut hashes = BTreeMap::new();
+        dna_hashes(b"ACGTACGT", &mut hashes, 13364770925836396135 + 1, 4);
         assert_eq!(hashes.len(), 3);
-        assert_eq!(tw_hash64(27), hashes[0]);
-        assert_eq!(tw_hash64(177), hashes[1]);
-        assert_eq!(tw_hash64(27), hashes[2]);
-
-        let hashes = dna_hashes(b"ACGTACGT", 13364770925836396135, 4);
-        assert_eq!(hashes.len(), 3);
-        assert_eq!(tw_hash64(27), hashes[0]);
-        assert_eq!(tw_hash64(177), hashes[1]);
-        assert_eq!(tw_hash64(27), hashes[2]);
-
-        let hashes = dna_hashes(b"ACGTACGT", 13364770925836396135 + 1, 4);
-        assert_eq!(hashes.len(), 5);
-        assert_eq!(tw_hash64(27), hashes[0]);
-        assert_eq!(tw_hash64(108), hashes[1]);
-        assert_eq!(tw_hash64(177), hashes[2]);
-        assert_eq!(tw_hash64(108), hashes[3]);
-        assert_eq!(tw_hash64(27), hashes[4]);
+        assert_eq!(hashes.values().sum::<u32>(), 5);
     }
 
     #[test]
     fn test_rev_comp_hashes() {
         // test that reverse complement hashes are being properly calculated
-        // and selected even odd k
+        // and selected for odd k
         //
         // kmer | rev | smallest | binary  | decimal | hash
         // ACG  | CGT | ACG      | 000110b | 6       | 12564563040126408309
-        // CGT  | ACG | ACG      | 000110b | 6       | 13364770925836396135
+        // CGT  | ACG | ACG      | 000110b | 6       | 12564563040126408309
         // GTT  | AAC | AAC      | 000001b | 1       | 8958356766268387398
         // TTT  | AAA | AAA      | 000000b | 0       | 13364770925836396135
 
-        let hashes = dna_hashes(b"ACGTTT", u64::MAX, 3);
-        assert_eq!(hashes.len(), 4);
+        let mut hashes = BTreeMap::new();
 
-        assert_eq!(tw_hash64(6), hashes[0]);
-        assert_eq!(tw_hash64(6), hashes[1]);
-        assert_eq!(tw_hash64(1), hashes[2]);
-        assert_eq!(tw_hash64(0), hashes[3]);
+        dna_hashes(b"ACGTTT", &mut hashes, u64::MAX, 3);
+        assert_eq!(hashes.len(), 3);
+        assert_eq!(hashes.values().sum::<u32>(), 4);
+
+        assert_eq!(hashes.get(&tw_hash64(6)), Some(&2));
+        assert_eq!(hashes.get(&tw_hash64(1)), Some(&1));
+        assert_eq!(hashes.get(&tw_hash64(0)), Some(&1));
     }
 }

@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use bincode;
+use itertools::Either;
 use log::info;
 use needletail::parse_fastx_reader;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
@@ -82,14 +83,6 @@ pub enum SketchType {
 }
 
 impl SketchType {
-    /// An iterator through hash values and their associated weights.
-    pub fn hashes(&self) -> Box<dyn Iterator<Item = &u64> + '_> {
-        match *self {
-            SketchType::Unweighted(ref sketch) => Box::new(sketch.hashes.iter()),
-            SketchType::Weighted(ref sketch) => Box::new(sketch.hashes.keys()),
-        }
-    }
-
     pub fn name(&self) -> &str {
         match self {
             SketchType::Unweighted(sketch) => &sketch.name,
@@ -129,6 +122,31 @@ impl SketchType {
         match self {
             SketchType::Unweighted(sketch) => sketch.is_empty(),
             SketchType::Weighted(sketch) => sketch.is_empty(),
+        }
+    }
+
+    /// An iterator through hash values and their associated weights.
+    // see: https://stackoverflow.com/questions/77405985
+    // Note: this is ~20% slower than calculating distance using
+    //       the underlying concrete type.
+    pub fn hashes(&self) -> impl Iterator<Item = u64> + '_ {
+        match *self {
+            SketchType::Unweighted(ref sketch) => Either::Left(sketch.hashes.iter().copied()),
+            SketchType::Weighted(ref sketch) => Either::Right(sketch.hashes.keys().copied()),
+        }
+    }
+
+    pub fn to_sketch(self) -> Sketch {
+        match self {
+            SketchType::Unweighted(sketch) => sketch,
+            SketchType::Weighted(_) => panic!("Not an unweighted sketch"),
+        }
+    }
+
+    pub fn to_weighted_sketch(self) -> WeightedSketch {
+        match self {
+            SketchType::Unweighted(_) => panic!("Not a weighted sketch"),
+            SketchType::Weighted(sketch) => sketch,
         }
     }
 }
