@@ -1,23 +1,23 @@
 use std::env;
 use std::fs::File;
 use std::io::stdout;
+use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
-use std::io::Write;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use log::{info};
+use log::info;
 use num_format::ToFormattedString;
 use serde::Serialize;
 
 use crate::cli::{Cli, Commands};
 use crate::config::LOCALE;
+use crate::distance::calc_sketch_distances;
 use crate::genome::read_genome_path_file;
 use crate::logging::setup_logger;
-use crate::sketch::{sketch, read_sketch, SeqFile, SKETCH_EXT};
+use crate::sketch::{read_sketch, sketch, SeqFile, SKETCH_EXT};
 use crate::sketch_params::SketchParams;
-use crate::distance::calc_sketch_distances;
 
 mod cli;
 pub mod config;
@@ -30,7 +30,6 @@ pub mod maybe_gzip_io;
 pub mod progress;
 pub mod sketch;
 pub mod sketch_params;
-
 
 /// Common initialization required by all commands.
 fn init(threads: usize) -> Result<()> {
@@ -180,7 +179,12 @@ fn run_sketch(args: &cli::SketchArgs) -> Result<()> {
 fn run_dist(args: &cli::DistArgs) -> Result<()> {
     init(args.threads)?;
 
-    calc_sketch_distances(&args.query_sketches, &args.reference_sketches, args.min_ani, &args.output_file)?;
+    calc_sketch_distances(
+        &args.query_sketches,
+        &args.reference_sketches,
+        args.min_ani,
+        &args.output_file,
+    )?;
 
     Ok(())
 }
@@ -191,7 +195,7 @@ fn run_info(args: &cli::InfoArgs) -> Result<()> {
 
     let (sketch_header, sketches) = read_sketch(&args.sketch_file)?;
 
-    # [derive(Serialize)]
+    #[derive(Serialize)]
     struct SketchInfo {
         name: String,
         bp_count: u64,

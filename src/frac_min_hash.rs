@@ -29,7 +29,12 @@ impl FracMinHash {
         self.bp_count += seq.num_bases() as u64;
         self.kmer_total_count += seq.num_bases() as u64 - self.kmer_length as u64 + 1;
 
-        dna_hashes(&seq.seq(), &mut self.hashes, self.max_hash, self.kmer_length);
+        dna_hashes(
+            &seq.seq(),
+            &mut self.hashes,
+            self.max_hash,
+            self.kmer_length,
+        );
     }
 
     pub fn unique_hash_count(&self) -> u64 {

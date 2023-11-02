@@ -173,53 +173,65 @@ mod tests {
 
     #[test]
     fn test_bit_kmer_value() {
-        let hashes = dna_hashes(b"AAAA", u64::MAX, 4);
-        assert_eq!(hashes.len(), 1);
-        assert_eq!(tw_hash64(0), hashes[0]); // AAAA = 00000000b = 0
+        let mut hashes = BTreeMap::new();
 
-        let hashes = dna_hashes(b"TTTT", u64::MAX, 4);
+        dna_hashes(b"AAAA", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(tw_hash64(0), hashes[0]); // AAAA = 0 < TTTT
+        assert_eq!(tw_hash64(0), *hashes.iter().next().unwrap().0); // AAAA = 00000000b = 0
 
-        let hashes = dna_hashes(b"CCCC", u64::MAX, 4);
+        hashes.clear();
+        dna_hashes(b"TTTT", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(tw_hash64(85), hashes[0]); // CCCC = 01010101b = 85
+        assert_eq!(tw_hash64(0), *hashes.iter().next().unwrap().0); // AAAA = 0 < TTTT
 
-        let hashes = dna_hashes(b"GGGG", u64::MAX, 4);
+        hashes.clear();
+        dna_hashes(b"CCCC", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(tw_hash64(85), hashes[0]); // CCCC = 85 < GGGG
+        assert_eq!(tw_hash64(85), *hashes.iter().next().unwrap().0); // CCCC = 01010101b = 85
+
+        hashes.clear();
+        dna_hashes(b"GGGG", &mut hashes, u64::MAX, 4);
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(tw_hash64(85), *hashes.iter().next().unwrap().0); // CCCC = 85 < GGGG
     }
 
     #[test]
     fn test_canonical_kmer() {
-        let hashes = dna_hashes(b"AAAAAAAA", u64::MAX, 4);
+        let mut hashes = BTreeMap::new();
+
+        dna_hashes(b"AAAAAAAA", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 5);
-        for hash in hashes {
+        for (hash, _count) in hashes {
             assert_eq!(tw_hash64(0), hash);
         }
 
-        let hashes = dna_hashes(b"TTTTTTTT", u64::MAX, 4);
+        hashes.clear();
+        dna_hashes(b"TTTTTTTT", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 5);
-        for hash in hashes {
+        for (hash, _count) in hashes {
             assert_eq!(tw_hash64(0), hash);
         }
 
-        let hashes = dna_hashes(b"CCCCCCCC", u64::MAX, 4);
+        hashes.clear();
+        dna_hashes(b"CCCCCCCC", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 5);
-        for hash in hashes {
+        for (hash, _count) in hashes {
             assert_eq!(tw_hash64(85), hash);
         }
 
-        let hashes = dna_hashes(b"GGGGGGGG", u64::MAX, 4);
+        hashes.clear();
+        dna_hashes(b"GGGGGGGG", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 5);
-        for hash in hashes {
+        for (hash, _count) in hashes {
             assert_eq!(tw_hash64(85), hash);
         }
     }
 
     #[test]
     fn test_simple_seq() {
-        let hashes = dna_hashes(b"ACGTACGT", u64::MAX, 4);
+        let mut hashes = BTreeMap::new();
+
+        dna_hashes(b"ACGTACGT", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 5);
 
         // kmer | rev  | smallest | binary    | decimal
@@ -229,6 +241,7 @@ mod tests {
         // TACG | CGTA | CGTA     | 01101100b | 108
         // ACGT | ACGT | ACGT     | 00011011b | 27
 
+        let hashes: Vec<ItemHash> = hashes.into_keys().collect();
         assert_eq!(tw_hash64(27), hashes[0]);
         assert_eq!(tw_hash64(108), hashes[1]);
         assert_eq!(tw_hash64(177), hashes[2]);
@@ -238,9 +251,12 @@ mod tests {
 
     #[test]
     fn test_mixed_case_seq() {
-        let hashes = dna_hashes(b"NCGTnCGT", u64::MAX, 4);
+        let mut hashes = BTreeMap::new();
+
+        dna_hashes(b"NCGTnCGT", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 5);
 
+        let hashes: Vec<ItemHash> = hashes.into_keys().collect();
         assert_eq!(tw_hash64(27), hashes[0]);
         assert_eq!(tw_hash64(108), hashes[1]);
         assert_eq!(tw_hash64(177), hashes[2]);

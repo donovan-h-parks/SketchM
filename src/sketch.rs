@@ -1,8 +1,8 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Mutex;
-use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
 use bincode;
@@ -12,13 +12,12 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 use crate::hashing::ItemHash;
-use crate::progress::progress_bar;
 use crate::maybe_gzip_io::maybe_gzip_reader;
+use crate::progress::progress_bar;
 use crate::sketch_params::SketchParams;
 
 pub const SKETCH_VERSION: &str = "1";
 pub const SKETCH_EXT: &str = ".sk";
-
 
 #[derive(Debug)]
 pub struct SeqFile {
@@ -76,6 +75,7 @@ impl WeightedSketch {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum SketchType {
     Unweighted(Sketch),
     Weighted(WeightedSketch),
@@ -83,10 +83,10 @@ pub enum SketchType {
 
 impl SketchType {
     /// An iterator through hash values and their associated weights.
-    pub fn hash_iter(&self) -> Box<dyn ExactSizeIterator<Item=(&u64, &u32)> + '_> {
+    pub fn hashes(&self) -> Box<dyn Iterator<Item = &u64> + '_> {
         match *self {
-            SketchType::Unweighted(ref sketch) => Box::new(sketch.hashes.iter().map(|hash| (hash, &1))),
-            SketchType::Weighted(ref sketch) => Box::new(sketch.hashes.iter())
+            SketchType::Unweighted(ref sketch) => Box::new(sketch.hashes.iter()),
+            SketchType::Weighted(ref sketch) => Box::new(sketch.hashes.keys()),
         }
     }
 
@@ -133,9 +133,12 @@ impl SketchType {
     }
 }
 
-
 /// Write sketch header information.
-fn write_sketch_header<W>(writer: &mut W, num_sketches: u32, sketch_params: &SketchParams) -> Result<()>
+fn write_sketch_header<W>(
+    writer: &mut W,
+    num_sketches: u32,
+    sketch_params: &SketchParams,
+) -> Result<()>
 where
     W: Write,
 {
@@ -196,7 +199,7 @@ pub fn sketch(
 }
 
 /// Create sketch from sequence file.
-pub fn sketch_file(seq_file: &SeqFile, sketch_params: &SketchParams) -> Result<Sketch> {
+pub fn sketch_file(seq_file: &SeqFile, sketch_params: &SketchParams) -> Result<SketchType> {
     let mut sketcher = sketch_params.create_sketcher();
     let reader = File::open(Path::new(&seq_file.file))
         .context(format!("Failed to open {}", seq_file.file))?;
@@ -207,23 +210,27 @@ pub fn sketch_file(seq_file: &SeqFile, sketch_params: &SketchParams) -> Result<S
         sketcher.process_seq(&record);
     }
 
-    Ok(sketcher.to_sketch(&seq_file.id))
+    if sketch_params.weighted() {
+        return Ok(SketchType::Weighted(
+            sketcher.to_weighted_sketch(&seq_file.id),
+        ));
+    }
+
+    Ok(SketchType::Unweighted(sketcher.to_sketch(&seq_file.id)))
 }
 
 /// Read sketches.
 pub fn read_sketch(sketch_file: &str) -> Result<(SketchHeader, Vec<SketchType>)> {
-    let mut reader = maybe_gzip_reader(sketch_file).context(format!(
-        "Unable to read sketch file: {}",
-        sketch_file
-    ))?;
+    let mut reader = maybe_gzip_reader(sketch_file)
+        .context(format!("Unable to read sketch file: {}", sketch_file))?;
 
     let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
 
     let progress_bar = progress_bar(sketch_header.num_sketches as u64);
     let mut sketches: Vec<SketchType> = Vec::new();
     for _ in 0..sketch_header.num_sketches {
-        let sketch: Sketch = bincode::deserialize_from(&mut reader)?;
-        sketches.push(SketchType::Unweighted(sketch));
+        let sketch: SketchType = bincode::deserialize_from(&mut reader)?;
+        sketches.push(sketch);
         progress_bar.inc(1);
     }
 

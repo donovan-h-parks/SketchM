@@ -1,17 +1,17 @@
 use std::cmp::Ordering;
-use std::io::stdout;
 use std::fs::File;
-use std::path::Path;
+use std::io::stdout;
 use std::io::Write;
+use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use log::info;
-use rayon::iter::{ParallelIterator, IntoParallelRefIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use serde::{Deserialize, Serialize};
 
-use crate::sketch::{read_sketch, SketchType, SketchHeader};
 use crate::progress::progress_bar;
+use crate::sketch::{read_sketch, SketchHeader, SketchType};
 
 /// Statistics for the distance between two sketches.
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ pub fn calc_sketch_distances(
     query_sketch_files: &[String],
     ref_sketch_files: &[String],
     min_ani: f64,
-    output_file: &Option<String>
+    output_file: &Option<String>,
 ) -> Result<()> {
     // load all query sketches into memory
     info!("Loading query sketches into memory:");
@@ -42,7 +42,7 @@ pub fn calc_sketch_distances(
             Some(ref header) => {
                 header.params.check_compatibility(&sketch_header.params)?;
             }
-            None => { prev_sketch_header = Some(sketch_header) },
+            None => prev_sketch_header = Some(sketch_header),
         }
 
         query_sketches.extend(sketches);
@@ -65,20 +65,23 @@ pub fn calc_sketch_distances(
         Some(output_file) => {
             let out_path = Path::new(output_file);
             Box::new(File::create(out_path)?)
-        },
-        None => {
-            Box::new(stdout())        
         }
+        None => Box::new(stdout()),
     };
 
-    let writer = csv::WriterBuilder::new().delimiter(b'\t').from_writer(writer);
-    
+    let writer = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_writer(writer);
+
     // calculate statistics between query and reference sketches
     info!("Calculating ANI between query and reference sketches:");
     let progress_bar = progress_bar(query_sketches.len() as u64 * ref_sketches.len() as u64);
     let safe_writer = Mutex::new(writer);
 
-    let k = prev_sketch_header.expect("Invalid sketch header").params.k();
+    let k = prev_sketch_header
+        .expect("Invalid sketch header")
+        .params
+        .k();
     for query_sketch in &query_sketches {
         ref_sketches.par_iter().for_each(|ref_sketch| {
             let dist_stats = distance(query_sketch, ref_sketch, k);
@@ -105,13 +108,13 @@ pub fn distance(query_sketch: &SketchType, ref_sketch: &SketchType, k: u8) -> Sk
         ref_sketch,
         query_sketch.name(),
         ref_sketch.name(),
-        k
+        k,
     )
 }
 
 /// Estimates statistics based on the k-mer hash sets of two sketches.
 ///
-/// If the hash values are not sorted the calculated distance statistics are 
+/// If the hash values are not sorted the calculated distance statistics are
 /// invalid. Currently, this constraint is enforced when creating the sketch.
 pub fn raw_distance(
     query_hashes: &SketchType,
@@ -121,10 +124,10 @@ pub fn raw_distance(
     k: u8,
 ) -> SketchDistance {
     let mut num_common_hashes: u64 = 0;
-    let mut q_iter = query_hashes.hash_iter().peekable();
-    let mut r_iter = ref_hashes.hash_iter().peekable();
+    let mut q_iter = query_hashes.hashes().peekable();
+    let mut r_iter = ref_hashes.hashes().peekable();
     while let (Some(q_hash), Some(r_hash)) = (q_iter.peek(), r_iter.peek()) {
-        match q_hash.0.cmp(r_hash.0) {
+        match q_hash.cmp(r_hash) {
             Ordering::Less => {
                 q_iter.next();
             }
@@ -147,16 +150,17 @@ pub fn raw_distance(
 
     if num_common_hashes > 0 {
         // calculate Jaccard index based ANI estimate
-        let total_hashes = query_hashes.unique_hash_count() + ref_hashes.unique_hash_count() - num_common_hashes;
+        let total_hashes =
+            query_hashes.unique_hash_count() + ref_hashes.unique_hash_count() - num_common_hashes;
         let jaccard = num_common_hashes as f32 / total_hashes as f32;
         let mash_distance = -1.0 * ((2.0 * jaccard) / (1.0 + jaccard)).ln() / k as f32;
         ani_jaccard = 100.0 * (1.0 - mash_distance);
-        
+
         // calculate containment of query relative to reference, and reference relative to query
         containment_query = num_common_hashes as f32 / query_hashes.unique_hash_count() as f32;
         containment_ref = num_common_hashes as f32 / ref_hashes.unique_hash_count() as f32;
 
-        // determine ANI from containment 
+        // determine ANI from containment
         // see Hera et al., 2023, Genome Research
         let exp = 1.0 / k as f32;
         ani_query = 100.0 * containment_query.powf(exp);
