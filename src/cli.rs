@@ -16,6 +16,9 @@ pub enum Commands {
     /// Compute distances between genome sketches
     Dist(DistArgs),
 
+    /// Create k-mer index from sketches
+    Index(IndexArgs),
+
     /// Display information about sketch file
     Info(InfoArgs),
 }
@@ -72,6 +75,17 @@ pub struct DistArgs {
     /// Number of threads to use
     #[arg(short, long, default_value_t = 1)]
     pub threads: usize,
+}
+
+#[derive(Parser)]
+pub struct IndexArgs {
+    /// Genome sketches to index
+    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+    pub sketches: Vec<String>,
+
+    /// Output index file
+    #[arg(short, long)]
+    pub output_file: String,
 }
 
 #[derive(Parser)]

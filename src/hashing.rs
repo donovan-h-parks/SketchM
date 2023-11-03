@@ -31,6 +31,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::sketch::KmerCount;
+
 pub type ItemHash = u64;
 
 const NT_TO_BYTE: [u8; 256] = {
@@ -73,7 +75,12 @@ pub fn tw_hash64(kmer: ItemHash) -> ItemHash {
 
 /// Determine hashes in sequence satisfying maximum k-mer hash criterion.
 // Modified from the fmh_seeds method by Jim Shaw in skani.
-pub fn dna_hashes(seq: &[u8], hashes: &mut BTreeMap<ItemHash, u32>, max_hash: ItemHash, k: u8) {
+pub fn dna_hashes(
+    seq: &[u8],
+    hashes: &mut BTreeMap<ItemHash, KmerCount>,
+    max_hash: ItemHash,
+    k: u8,
+) {
     let k = k as usize;
 
     if seq.len() < k {
@@ -200,25 +207,25 @@ mod tests {
         let mut hashes = BTreeMap::new();
         dna_hashes(b"AAAAAAAA", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
         assert_eq!(hashes.get(&tw_hash64(0)), Some(&5));
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"TTTTTTTT", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
         assert_eq!(hashes.get(&tw_hash64(0)), Some(&5));
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"CCCCCCCC", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
         assert_eq!(hashes.get(&tw_hash64(85)), Some(&5));
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"GGGGGGGG", &mut hashes, u64::MAX, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
         assert_eq!(hashes.get(&tw_hash64(85)), Some(&5));
     }
 
@@ -235,7 +242,7 @@ mod tests {
         // ACGT | ACGT | ACGT     | 00011011b | 27
 
         assert_eq!(hashes.len(), 3);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
 
         assert_eq!(hashes.get(&tw_hash64(27)), Some(&2));
         assert_eq!(hashes.get(&tw_hash64(108)), Some(&2));
@@ -250,7 +257,7 @@ mod tests {
         dna_hashes(b"AcgTaCGt", &mut hashes, u64::MAX, 4);
 
         assert_eq!(hashes.len(), 3);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
 
         assert_eq!(hashes.get(&tw_hash64(27)), Some(&2));
         assert_eq!(hashes.get(&tw_hash64(108)), Some(&2));
@@ -267,7 +274,7 @@ mod tests {
         dna_hashes(b"NCGTnCGT", &mut hashes, u64::MAX, 4);
 
         assert_eq!(hashes.len(), 3);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
 
         assert_eq!(hashes.get(&tw_hash64(27)), Some(&2));
         assert_eq!(hashes.get(&tw_hash64(108)), Some(&2));
@@ -290,32 +297,32 @@ mod tests {
         let mut hashes = BTreeMap::new();
         dna_hashes(b"ACGTACGT", &mut hashes, 8958356766268387398, 4);
         assert_eq!(hashes.len(), 0);
-        assert_eq!(hashes.values().sum::<u32>(), 0);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 0);
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"ACGTACGT", &mut hashes, 8958356766268387398 + 1, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes.values().sum::<u32>(), 1);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 1);
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"ACGTACGT", &mut hashes, 12564563040126408309, 4);
         assert_eq!(hashes.len(), 1);
-        assert_eq!(hashes.values().sum::<u32>(), 1);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 1);
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"ACGTACGT", &mut hashes, 12564563040126408309 + 1, 4);
         assert_eq!(hashes.len(), 2);
-        assert_eq!(hashes.values().sum::<u32>(), 3);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 3);
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"ACGTACGT", &mut hashes, 13364770925836396135, 4);
         assert_eq!(hashes.len(), 2);
-        assert_eq!(hashes.values().sum::<u32>(), 3);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 3);
 
         let mut hashes = BTreeMap::new();
         dna_hashes(b"ACGTACGT", &mut hashes, 13364770925836396135 + 1, 4);
         assert_eq!(hashes.len(), 3);
-        assert_eq!(hashes.values().sum::<u32>(), 5);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 5);
     }
 
     #[test]
@@ -333,7 +340,7 @@ mod tests {
 
         dna_hashes(b"ACGTTT", &mut hashes, u64::MAX, 3);
         assert_eq!(hashes.len(), 3);
-        assert_eq!(hashes.values().sum::<u32>(), 4);
+        assert_eq!(hashes.values().sum::<KmerCount>(), 4);
 
         assert_eq!(hashes.get(&tw_hash64(6)), Some(&2));
         assert_eq!(hashes.get(&tw_hash64(1)), Some(&1));

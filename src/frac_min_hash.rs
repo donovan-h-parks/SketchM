@@ -3,11 +3,11 @@ use std::collections::BTreeMap;
 use needletail::parser::SequenceRecord;
 
 use crate::hashing::{dna_hashes, ItemHash};
-use crate::sketch::{Sketch, WeightedSketch};
+use crate::sketch::{KmerCount, Sketch, WeightedSketch};
 
 #[derive(Clone, Debug)]
 pub struct FracMinHash {
-    hashes: BTreeMap<ItemHash, u32>,
+    hashes: BTreeMap<ItemHash, KmerCount>,
     kmer_length: u8,
     max_hash: u64,
     kmer_total_count: u64,

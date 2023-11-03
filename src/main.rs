@@ -16,6 +16,7 @@ use crate::cli::{Cli, Commands};
 use crate::config::LOCALE;
 use crate::distance::{calc_sketch_distances, calc_weighted_sketch_distances};
 use crate::genome::read_genome_path_file;
+use crate::index_sketches::index_sketches;
 use crate::logging::setup_logger;
 use crate::sketch::{read_sketch, sketch, SeqFile, SketchHeader, SKETCH_EXT};
 use crate::sketch_params::SketchParams;
@@ -26,6 +27,7 @@ pub mod distance;
 pub mod frac_min_hash;
 pub mod genome;
 pub mod hashing;
+pub mod index_sketches;
 pub mod logging;
 pub mod maybe_gzip_io;
 pub mod progress;
@@ -211,6 +213,15 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
     Ok(())
 }
 
+/// Run the index command.
+fn run_index(args: &cli::IndexArgs) -> Result<()> {
+    init(1)?;
+
+    index_sketches(&args.sketches, &args.output_file)?;
+
+    Ok(())
+}
+
 /// Run the sketch info command.
 fn run_info(args: &cli::InfoArgs) -> Result<()> {
     init(1)?;
@@ -277,6 +288,7 @@ fn main() -> Result<()> {
     match &cli.command {
         Commands::Sketch(args) => run_sketch(args)?,
         Commands::Dist(args) => run_dist(args)?,
+        Commands::Index(args) => run_index(args)?,
         Commands::Info(args) => run_info(args)?,
     }
 

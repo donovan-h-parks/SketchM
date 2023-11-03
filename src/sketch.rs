@@ -20,6 +20,8 @@ use crate::sketch_params::SketchParams;
 pub const SKETCH_VERSION: &str = "1";
 pub const SKETCH_EXT: &str = ".sk";
 
+pub type KmerCount = u16;
+
 #[derive(Debug)]
 pub struct SeqFile {
     pub id: String,
@@ -59,7 +61,7 @@ pub struct WeightedSketch {
     pub name: String,
     pub bp_count: u64,
     pub kmer_total_count: u64,
-    pub hashes: BTreeMap<ItemHash, u32>,
+    pub hashes: BTreeMap<ItemHash, KmerCount>,
 }
 
 impl WeightedSketch {
