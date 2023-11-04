@@ -1,19 +1,26 @@
 use std::cmp::Ordering;
 use std::cmp::{max, min};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::stdout;
 use std::io::Write;
+use std::iter;
 use std::path::Path;
 use std::sync::Mutex;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::info;
+use num_format::ToFormattedString;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::ParallelBridge;
 use serde::{Deserialize, Serialize};
 
+use crate::config::LOCALE;
 use crate::hashing::ItemHash;
+use crate::index_sketches::{read_index, Index};
+use crate::maybe_gzip_io::{maybe_gzip_reader, GzipParams, MaybeGzipWriter};
 use crate::progress::progress_bar;
-use crate::sketch::{read_sketch, Sketch, SketchHeader, WeightedSketch};
+use crate::sketch::{read_sketch, Sketch, SketchHeader, SketchType, WeightedSketch};
 
 /// Statistics for unweighted distance between two sketches.
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,6 +54,140 @@ pub struct WeightedSketchDistance<'a> {
     pub containment_ref: f32,
     pub containment_query_weighted: f32,
     pub containment_ref_weighted: f32,
+}
+
+/// Calculate unweighted distances between query sketches and a reference index.
+pub fn calc_sketch_distances_to_index(
+    query_sketch_files: &[String],
+    reference_index: &str,
+    min_ani: f64,
+    output_file: &Option<String>,
+    threads: usize,
+) -> Result<()> {
+    // load reference index
+    info!("Loading reference index into memory:");
+    let index = read_index(reference_index)?;
+    info!(
+        " - index contains {} k-mers",
+        index.kmer_index.len().to_formatted_string(&LOCALE)
+    );
+
+    // create writer, compressing output if file name has a 'gz' extension
+    let writer: Box<dyn Write + Send> = match output_file {
+        Some(output_file) => {
+            let out_path = Path::new(output_file);
+            let out_file = File::create(out_path)?;
+            if out_path.extension() == Some(OsStr::new("gz")) {
+                // need to compress with multiple threads or this becomes
+                // the rate limiting step; seems setting this to the
+                // maximum number of threads specified gives good
+                // performance even if these theads need to compete
+                // with processing of the sketches
+                let gzip_params = GzipParams { level: 2, threads };
+                Box::new(MaybeGzipWriter::new(out_file, Some(gzip_params)))
+            } else {
+                Box::new(out_file)
+            }
+        }
+        None => Box::new(stdout()),
+    };
+
+    let writer = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_writer(writer);
+
+    // calculate statistics between query and reference index
+    info!("Calculating ANI between query sketches and reference index:");
+    let safe_writer = Mutex::new(writer);
+
+    for query_sketch_file in query_sketch_files {
+        let mut reader = maybe_gzip_reader(query_sketch_file)
+            .context(format!("Unable to read sketch file: {}", query_sketch_file))?;
+
+        let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
+        let k = sketch_header.params.k();
+
+        let progress_bar = progress_bar(sketch_header.num_sketches as u64);
+
+        iter::from_fn(move || bincode::deserialize_from(&mut reader).ok())
+            .par_bridge()
+            .for_each(|sketch: SketchType| {
+                let sketch = sketch.to_sketch();
+                let dist_stats = unweighted_distances_to_index(&sketch, &index, k, min_ani);
+                for ds in dist_stats {
+                    safe_writer
+                        .lock()
+                        .expect("Failed to obtain writer")
+                        .serialize(ds)
+                        .expect("Failed to write sketch to file")
+                }
+                progress_bar.inc(1);
+            });
+
+        progress_bar.finish();
+    }
+
+    Ok(())
+}
+
+/// Calculate unweighted distances between a sketch and a reference index.
+fn unweighted_distances_to_index<'a>(
+    sketch: &'a Sketch,
+    index: &'a Index,
+    k: u8,
+    min_ani: f64,
+) -> Vec<SketchDistance<'a>> {
+    let mut common_hash_counts: Vec<u32> = vec![0; index.genomes.len()];
+    for hash in &sketch.hashes {
+        if let Some(genome_idx) = index.kmer_index.get(hash) {
+            for idx in genome_idx {
+                common_hash_counts[*idx as usize] += 1
+            }
+        }
+    }
+
+    let mut dists = Vec::new();
+    for (genome_idx, num_common_hashes) in common_hash_counts.into_iter().enumerate() {
+        if num_common_hashes == 0 {
+            continue;
+        }
+
+        let (gid, num_ref_hashes) = &index.genomes[genome_idx];
+        let num_ref_hashes = *num_ref_hashes;
+        let num_query_hashes = sketch.hash_count() as u32;
+
+        // calculate Jaccard index based ANI estimate
+        let total_hashes = num_query_hashes + num_ref_hashes - num_common_hashes;
+        let jaccard = num_common_hashes as f32 / total_hashes as f32;
+        let mash_dist = mash_distance(jaccard, k);
+        let ani_jaccard = 100.0 * (1.0 - mash_dist);
+
+        // calculate containment of query relative to reference, and reference relative to query
+        let containment_query = num_common_hashes as f32 / num_query_hashes as f32;
+        let containment_ref = num_common_hashes as f32 / num_ref_hashes as f32;
+
+        // determine ANI from containment
+        // see Hera et al., 2023, Genome Research
+        let exp = 1.0 / k as f32;
+        let ani_query = 100.0 * containment_query.powf(exp);
+        let ani_ref = 100.0 * containment_ref.powf(exp);
+
+        if f32::max(ani_query, ani_ref) >= min_ani as f32 {
+            let d = SketchDistance {
+                query_id: &sketch.name,
+                ref_id: gid,
+                ani_jaccard,
+                ani_query,
+                ani_ref,
+                containment_query,
+                containment_ref,
+            };
+
+            dists.push(d);
+        }
+    }
+
+    dists
 }
 
 /// Calculate unweighted distance statistics between query and reference sketches.

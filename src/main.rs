@@ -14,7 +14,9 @@ use serde::Serialize;
 
 use crate::cli::{Cli, Commands};
 use crate::config::LOCALE;
-use crate::distance::{calc_sketch_distances, calc_weighted_sketch_distances};
+use crate::distance::{
+    calc_sketch_distances, calc_sketch_distances_to_index, calc_weighted_sketch_distances,
+};
 use crate::genome::read_genome_path_file;
 use crate::index_sketches::index_sketches;
 use crate::logging::setup_logger;
@@ -222,6 +224,21 @@ fn run_index(args: &cli::IndexArgs) -> Result<()> {
     Ok(())
 }
 
+/// Run the distance to index command.
+fn run_dist_by_index(args: &cli::DistByIndexArgs) -> Result<()> {
+    init(args.threads)?;
+
+    calc_sketch_distances_to_index(
+        &args.query_sketches,
+        &args.reference_index,
+        args.min_ani,
+        &args.output_file,
+        args.threads,
+    )?;
+
+    Ok(())
+}
+
 /// Run the sketch info command.
 fn run_info(args: &cli::InfoArgs) -> Result<()> {
     init(1)?;
@@ -289,6 +306,7 @@ fn main() -> Result<()> {
         Commands::Sketch(args) => run_sketch(args)?,
         Commands::Dist(args) => run_dist(args)?,
         Commands::Index(args) => run_index(args)?,
+        Commands::DistByIndex(args) => run_dist_by_index(args)?,
         Commands::Info(args) => run_info(args)?,
     }
 

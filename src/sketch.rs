@@ -193,9 +193,12 @@ pub fn sketch(
         rayon::current_num_threads()
     );
 
+    // In practice, this performs well since the rate limiting step is the IO for
+    // reading in genome files and thus having to obtain a lock on the output writer
+    // is not an issue. Perhaps if the genome files were all on fast IO (SSD?) the
+    // shared output writer could become rate limiting.
     let progress_bar = progress_bar(genome_files.len() as u64);
     let safe_writer = Mutex::new(writer);
-
     genome_files.par_iter().for_each(|genome_file| {
         let sketch = sketch_file(genome_file, sketch_params).expect("Failed to create sketch");
         let sketch_encoded = bincode::serialize(&sketch).expect("Failed to convert sketch to JSON");

@@ -19,6 +19,9 @@ pub enum Commands {
     /// Create k-mer index from sketches
     Index(IndexArgs),
 
+    /// Compute distances using k-mer index
+    DistByIndex(DistByIndexArgs),
+
     /// Display information about sketch file
     Info(InfoArgs),
 }
@@ -69,7 +72,7 @@ pub struct DistArgs {
     pub output_file: Option<String>,
 
     /// Only report ANI values above this threshold [0, 100]
-    #[arg(long, default_value_t = 0.0, value_parser = validate_ani)]
+    #[arg(long, default_value_t = 0.01, value_parser = validate_ani)]
     pub min_ani: f64,
 
     /// Number of threads to use
@@ -86,6 +89,29 @@ pub struct IndexArgs {
     /// Output index file
     #[arg(short, long)]
     pub output_file: String,
+}
+
+#[derive(Parser)]
+pub struct DistByIndexArgs {
+    /// Query genome sketches
+    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+    pub query_sketches: Vec<String>,
+
+    /// Reference k-mer index
+    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+    pub reference_index: String,
+
+    /// Output file [default: stdout]
+    #[arg(short, long)]
+    pub output_file: Option<String>,
+
+    /// Only report ANI values above this threshold [0, 100]
+    #[arg(long, default_value_t = 0.01, value_parser = validate_ani)]
+    pub min_ani: f64,
+
+    /// Number of threads to use
+    #[arg(short, long, default_value_t = 1)]
+    pub threads: usize,
 }
 
 #[derive(Parser)]

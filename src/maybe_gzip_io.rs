@@ -1,17 +1,18 @@
-use std::io::{BufWriter, Write};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::Result;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use gzp::syncz::{SyncZ, SyncZBuilder};
 use gzp::{
     deflate,
     par::compress::{ParCompress, ParCompressBuilder},
     ZWriter,
 };
-use flate2::read::GzDecoder;
-
 
 const BUFFER_SIZE: usize = 128 * 1024;
 
@@ -21,27 +22,35 @@ pub struct GzipParams {
 }
 
 pub enum MaybeGzipWriter<T: Write> {
-    Gzip(ParCompress<deflate::Gzip>),
+    GzipParallel(ParCompress<deflate::Gzip>),
+    Gzip(SyncZ<GzEncoder<T>>),
     Plain(BufWriter<T>),
 }
 
 impl<T: Write + Send + 'static> MaybeGzipWriter<T> {
     pub fn new(file: T, gzip_params: Option<GzipParams>) -> Self {
         match gzip_params {
-            Some(params) => MaybeGzipWriter::Gzip(
-                ParCompressBuilder::new()
-                    .compression_level(flate2::Compression::new(params.level as u32))
-                    .num_threads(params.threads)
-                    .expect("Invalid thread count")
-                    .from_writer(file),
-            ),
+            Some(params) => {
+                if params.threads > 1 {
+                    MaybeGzipWriter::GzipParallel(
+                        ParCompressBuilder::new()
+                            .compression_level(flate2::Compression::new(params.level as u32))
+                            .num_threads(params.threads)
+                            .expect("Invalid thread count")
+                            .from_writer(file),
+                    )
+                } else {
+                    MaybeGzipWriter::Gzip(SyncZBuilder::<deflate::Gzip, _>::new().from_writer(file))
+                }
+            }
             None => MaybeGzipWriter::Plain(BufWriter::with_capacity(BUFFER_SIZE, file)),
         }
     }
 
     pub fn finish(self) -> Result<()> {
         match self {
-            MaybeGzipWriter::Gzip(mut gzip) => gzip.finish()?,
+            MaybeGzipWriter::GzipParallel(mut gzip) => gzip.finish()?,
+            MaybeGzipWriter::Gzip(mut bw) => bw.finish()?,
             MaybeGzipWriter::Plain(mut bw) => bw.flush()?,
         };
 
@@ -52,6 +61,7 @@ impl<T: Write + Send + 'static> MaybeGzipWriter<T> {
 impl<T: Write> MaybeGzipWriter<T> {
     fn as_write(&mut self) -> &mut dyn Write {
         match self {
+            MaybeGzipWriter::GzipParallel(gzip) => gzip,
             MaybeGzipWriter::Gzip(gzip) => gzip,
             MaybeGzipWriter::Plain(plain) => plain,
         }
