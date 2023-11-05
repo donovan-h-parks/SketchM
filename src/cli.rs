@@ -13,14 +13,11 @@ pub enum Commands {
     /// Create k-mer sketches for genomes
     Sketch(SketchArgs),
 
-    /// Compute distances between genome sketches
-    Dist(DistArgs),
-
     /// Create k-mer index from sketches
     Index(IndexArgs),
 
-    /// Compute distances using k-mer index
-    DistByIndex(DistByIndexArgs),
+    /// Compute distances between genome sketches
+    Dist(DistArgs),
 
     /// Display information about sketch file
     Info(InfoArgs),
@@ -29,15 +26,15 @@ pub enum Commands {
 #[derive(Parser)]
 pub struct SketchArgs {
     /// Genome FASTA/Q file(s) to sketch
-    #[arg(short = 'f', long, value_delimiter = ' ', num_args = 1..)]
+    #[arg(short = 'f', long, value_delimiter = ' ', num_args = 1.., group= "input")]
     pub genome_files: Option<Vec<String>>,
 
     /// File indicating path to genome files to sketch (TSV: genome ID followed by path to FASTA file)
-    #[arg(short = 'p', long)]
+    #[arg(short = 'p', long, group = "input")]
     pub genome_path_file: Option<String>,
 
     /// Output sketch file
-    #[arg(short, long, required = true)]
+    #[arg(short, long, requires = "input")]
     pub output_file: String,
 
     /// Generated sketch indicating number of times each k-mer occurs
@@ -49,41 +46,18 @@ pub struct SketchArgs {
     pub kmer_length: u8,
 
     /// Sketch scaling factor
-    #[arg(short, long, default_value_t = 1000)]
+    #[arg(short, long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
     pub scale: u64,
 
     /// Number of threads to use
-    #[arg(short, long, default_value_t = 1)]
-    pub threads: usize,
-}
-
-#[derive(Parser)]
-pub struct DistArgs {
-    /// Query genome sketches
-    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
-    pub query_sketches: Vec<String>,
-
-    /// Reference genome sketches
-    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
-    pub reference_sketches: Vec<String>,
-
-    /// Output file [default: stdout]
-    #[arg(short, long)]
-    pub output_file: Option<String>,
-
-    /// Only report ANI values above this threshold [0, 100]
-    #[arg(long, default_value_t = 0.01, value_parser = validate_ani)]
-    pub min_ani: f64,
-
-    /// Number of threads to use
-    #[arg(short, long, default_value_t = 1)]
+    #[arg(short, long, default_value_t = 1, value_parser = validate_threads)]
     pub threads: usize,
 }
 
 #[derive(Parser)]
 pub struct IndexArgs {
     /// Genome sketches to index
-    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+    #[arg(short, long, value_delimiter = ' ', num_args = 1.., required=true)]
     pub sketches: Vec<String>,
 
     /// Output index file
@@ -92,14 +66,18 @@ pub struct IndexArgs {
 }
 
 #[derive(Parser)]
-pub struct DistByIndexArgs {
+pub struct DistArgs {
     /// Query genome sketches
-    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
+    #[arg(short, long, value_delimiter = ' ', num_args = 1.., required=true, requires = "reference")]
     pub query_sketches: Vec<String>,
 
+    /// Reference genome sketches
+    #[arg(short, long, value_delimiter = ' ', num_args = 1.., group= "reference", conflicts_with = "reference_index")]
+    pub reference_sketches: Option<Vec<String>>,
+
     /// Reference k-mer index
-    #[arg(short, long, value_delimiter = ' ', num_args = 1..)]
-    pub reference_index: String,
+    #[arg(short = 'i', long, group = "reference")]
+    pub reference_index: Option<String>,
 
     /// Output file [default: stdout]
     #[arg(short, long)]
@@ -110,7 +88,7 @@ pub struct DistByIndexArgs {
     pub min_ani: f64,
 
     /// Number of threads to use
-    #[arg(short, long, default_value_t = 1)]
+    #[arg(short, long, default_value_t = 1, value_parser = validate_threads)]
     pub threads: usize,
 }
 
@@ -130,11 +108,23 @@ fn validate_kmer_length(k: &str) -> Result<u8, String> {
         .parse()
         .map_err(|_| format!("`{k}` isn't a valid k-mer length"))?;
 
-    if !(0..=32).contains(&k) {
-        return Err("K-mer length must be in the range [1, 32]".to_string());
+    if !(1..=32).contains(&k) {
+        return Err("k-mer length must be in the range [1, 32]".to_string());
     }
 
     Ok(k)
+}
+
+fn validate_threads(threads: &str) -> Result<usize, String> {
+    let threads: usize = threads
+        .parse()
+        .map_err(|_| format!("`{threads}` isn't a valid value"))?;
+
+    if !(1..=1024).contains(&threads) {
+        return Err("Threads  must be in the range [1, 1024]".to_string());
+    }
+
+    Ok(threads)
 }
 
 fn validate_ani(v: &str) -> Result<f64, String> {

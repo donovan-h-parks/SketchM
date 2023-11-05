@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
+use csv::Writer;
 use log::info;
 use num_format::ToFormattedString;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -56,6 +57,31 @@ pub struct WeightedSketchDistance<'a> {
     pub containment_ref_weighted: f32,
 }
 
+/// Create CSV writer using multiple threads to compressing output
+/// if file name has a `gz` extension.
+fn create_csv_writer(
+    output_file: &Option<String>,
+    threads: usize,
+) -> Result<Writer<Box<dyn Write + Send>>> {
+    let writer: Box<dyn Write + Send> = match output_file {
+        Some(output_file) => {
+            let out_path = Path::new(output_file);
+            let out_file = File::create(out_path)?;
+            if out_path.extension() == Some(OsStr::new("gz")) {
+                let gzip_params = GzipParams { level: 2, threads };
+                Box::new(MaybeGzipWriter::new(out_file, Some(gzip_params)))
+            } else {
+                Box::new(out_file)
+            }
+        }
+        None => Box::new(stdout()),
+    };
+
+    Ok(csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_writer(writer))
+}
+
 /// Calculate unweighted distances between query sketches and a reference index.
 pub fn calc_sketch_distances_to_index(
     query_sketch_files: &[String],
@@ -66,35 +92,16 @@ pub fn calc_sketch_distances_to_index(
 ) -> Result<()> {
     // load reference index
     info!("Loading reference index into memory:");
-    let index = read_index(reference_index)?;
+    let (index_header, index) = read_index(reference_index)?;
     info!(
         " - index contains {} k-mers",
         index.kmer_index.len().to_formatted_string(&LOCALE)
     );
 
-    // create writer, compressing output if file name has a 'gz' extension
-    let writer: Box<dyn Write + Send> = match output_file {
-        Some(output_file) => {
-            let out_path = Path::new(output_file);
-            let out_file = File::create(out_path)?;
-            if out_path.extension() == Some(OsStr::new("gz")) {
-                // need to compress with multiple threads or this becomes
-                // the rate limiting step; seems setting this to the
-                // maximum number of threads specified gives good
-                // performance even if these theads need to compete
-                // with processing of the sketches
-                let gzip_params = GzipParams { level: 2, threads };
-                Box::new(MaybeGzipWriter::new(out_file, Some(gzip_params)))
-            } else {
-                Box::new(out_file)
-            }
-        }
-        None => Box::new(stdout()),
-    };
-
-    let writer = csv::WriterBuilder::new()
-        .delimiter(b'\t')
-        .from_writer(writer);
+    // Need to compress with multiple threads or this becomes the rate limiting
+    // step. Setting this to the maximum number of threads specified gives good
+    // performance even if these theads need to compete with processing of sketches.
+    let writer = create_csv_writer(output_file, threads)?;
 
     // calculate statistics between query and reference index
     info!("Calculating ANI between query sketches and reference index:");
@@ -106,6 +113,10 @@ pub fn calc_sketch_distances_to_index(
 
         let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
         let k = sketch_header.params.k();
+
+        index_header
+            .params
+            .check_compatibility(&sketch_header.params)?;
 
         let progress_bar = progress_bar(sketch_header.num_sketches as u64);
 
@@ -196,6 +207,7 @@ pub fn calc_sketch_distances(
     ref_sketch_files: &[String],
     min_ani: f64,
     output_file: &Option<String>,
+    threads: usize,
 ) -> Result<()> {
     // load all query sketches into memory
     info!("Loading query sketches into memory:");
@@ -229,18 +241,9 @@ pub fn calc_sketch_distances(
         }
     }
 
-    // create writer
-    let writer: Box<dyn Write + Send> = match output_file {
-        Some(output_file) => {
-            let out_path = Path::new(output_file);
-            Box::new(File::create(out_path)?)
-        }
-        None => Box::new(stdout()),
-    };
-
-    let writer = csv::WriterBuilder::new()
-        .delimiter(b'\t')
-        .from_writer(writer);
+    // create CSV writer using multiple threads to compressing output
+    // if file name has a `gz` extension
+    let writer = create_csv_writer(output_file, threads)?;
 
     // calculate statistics between query and reference sketches
     info!("Calculating ANI between query and reference sketches:");
@@ -279,6 +282,7 @@ pub fn calc_weighted_sketch_distances(
     ref_sketch_files: &[String],
     min_ani: f64,
     output_file: &Option<String>,
+    threads: usize,
 ) -> Result<()> {
     // load all query sketches into memory
     info!("Loading query sketches into memory:");
@@ -312,18 +316,9 @@ pub fn calc_weighted_sketch_distances(
         }
     }
 
-    // create writer
-    let writer: Box<dyn Write + Send> = match output_file {
-        Some(output_file) => {
-            let out_path = Path::new(output_file);
-            Box::new(File::create(out_path)?)
-        }
-        None => Box::new(stdout()),
-    };
-
-    let writer = csv::WriterBuilder::new()
-        .delimiter(b'\t')
-        .from_writer(writer);
+    // create CSV writer using multiple threads to compressing output
+    // if file name has a `gz` extension
+    let writer = create_csv_writer(output_file, threads)?;
 
     // calculate statistics between query and reference sketches
     info!("Calculating ANI between query and reference sketches:");

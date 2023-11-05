@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 
 use ahash::HashMap;
 use anyhow::{Context, Result};
@@ -13,7 +13,9 @@ use crate::hashing::ItemHash;
 use crate::maybe_gzip_io::maybe_gzip_reader;
 use crate::progress::progress_bar;
 use crate::sketch::{SketchHeader, SketchType};
+use crate::sketch_params::SketchParams;
 
+pub const INDEX_VERSION: &str = "1";
 pub const INDEX_EXT: &str = ".idx";
 
 /// Structure for determining all genomes with a given k-mer.
@@ -41,12 +43,48 @@ pub struct Index {
     pub kmer_index: HashMap<ItemHash, TinyVec<[u32; 3]>>,
 }
 
+/// Header information for an index file.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IndexHeader {
+    pub program: String,
+    pub version: String,
+    pub date_created: String,
+    pub index_version: String,
+    pub num_sketches: u32,
+    pub params: SketchParams,
+}
+
+/// Write index header information.
+fn write_index_header<W>(
+    writer: &mut W,
+    num_sketches: u32,
+    sketch_params: &SketchParams,
+) -> Result<()>
+where
+    W: Write,
+{
+    let index_header = IndexHeader {
+        program: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        date_created: chrono::offset::Utc::now().to_string(),
+        index_version: INDEX_VERSION.to_string(),
+        num_sketches,
+        params: sketch_params.clone(),
+    };
+
+    let index_header_encoded = bincode::serialize(&index_header)?;
+    writer.write_all(&index_header_encoded)?;
+
+    Ok(())
+}
+
 /// Create index indicating all genomes with a given k-mer.
 pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> {
     let mut index = Index::default();
 
     // add all sketches from all sketch files to the index
     let mut total_kmers: u64 = 0;
+    let mut prev_sketch_header: Option<SketchHeader> = None;
     for sketch_file in sketch_files {
         info!("Adding sketches to k-mer index:");
 
@@ -54,9 +92,19 @@ pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> 
             .context(format!("Unable to read sketch file: {}", sketch_file))?;
 
         let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
-        let progress_bar = progress_bar(sketch_header.num_sketches as u64);
+        let num_sketches = sketch_header.num_sketches as u64;
 
-        for _ in 0..sketch_header.num_sketches {
+        // make sure all sketch files contain compatible sketches
+        match prev_sketch_header {
+            Some(ref header) => {
+                header.params.check_compatibility(&sketch_header.params)?;
+            }
+            None => prev_sketch_header = Some(sketch_header),
+        }
+
+        // add sketches to index
+        let progress_bar = progress_bar(num_sketches);
+        for _ in 0..num_sketches {
             let sketch: SketchType = bincode::deserialize_from(&mut reader)?;
 
             let genome_id = index.genomes.len() as u32;
@@ -83,7 +131,8 @@ pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> 
         total_kmers.to_formatted_string(&LOCALE)
     );
 
-    // Histogram
+    // Histogram of number of k-mers with increasing
+    // number of genomes
     let mut counts: Vec<u64> = vec![0; 10];
     let mut other = 0;
     for gids in index.kmer_index.values() {
@@ -117,18 +166,24 @@ pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> 
     };
 
     let fp = File::create(out_file)?;
-    let writer = BufWriter::new(fp);
+    let mut writer = BufWriter::new(fp);
+    write_index_header(
+        &mut writer,
+        index.genomes.len() as u32,
+        &prev_sketch_header.expect("Invalid sketch header").params,
+    )?;
     bincode::serialize_into(writer, &index)?;
 
     Ok(())
 }
 
 /// Read index.
-pub fn read_index(index_file: &str) -> Result<Index> {
+pub fn read_index(index_file: &str) -> Result<(IndexHeader, Index)> {
     let mut reader = maybe_gzip_reader(index_file)
         .context(format!("Unable to read index file: {}", index_file))?;
 
+    let index_header: IndexHeader = bincode::deserialize_from(&mut reader)?;
     let index: Index = bincode::deserialize_from(&mut reader)?;
 
-    Ok(index)
+    Ok((index_header, index))
 }

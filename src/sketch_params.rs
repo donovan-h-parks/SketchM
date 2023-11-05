@@ -22,7 +22,11 @@ impl Default for SketchParams {
 
 impl SketchParams {
     pub fn new(kmer_length: u8, scale: u64, weighted: bool) -> Self {
-        SketchParams { kmer_length, scale, weighted }
+        SketchParams {
+            kmer_length,
+            scale,
+            weighted,
+        }
     }
 
     pub fn create_sketcher(&self) -> FracMinHash {
@@ -45,7 +49,7 @@ impl SketchParams {
     pub fn check_compatibility(&self, other: &SketchParams) -> Result<bool> {
         if self.k() != other.k() {
             bail!(
-                "Sketch has K = {}, but other sketch has K = {}",
+                "Sketch has k = {}, but other sketch has k = {}",
                 self.k(),
                 other.k()
             );

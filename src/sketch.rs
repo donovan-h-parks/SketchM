@@ -28,6 +28,7 @@ pub struct SeqFile {
     pub file: String,
 }
 
+/// Header information for a sketch file.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SketchHeader {
     pub program: String,

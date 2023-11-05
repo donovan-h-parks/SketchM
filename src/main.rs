@@ -90,7 +90,7 @@ where
 
         match path.extension() {
             None => {
-                serde_json::to_writer_pretty(stdout(), &data)
+                serde_json::to_writer_pretty(writer, &data)
                     .map_err(|_| anyhow!("Could not serialize JSON to file"))?;
             }
             Some(ext) => match ext.to_str() {
@@ -184,31 +184,43 @@ fn run_sketch(args: &cli::SketchArgs) -> Result<()> {
 fn run_dist(args: &cli::DistArgs) -> Result<()> {
     init(args.threads)?;
 
-    // read sketch header to determine if we should
-    // calculate unweighted or weighted distances
-    let mut reader = maybe_gzip_reader(&args.query_sketches[0]).context(format!(
-        "Unable to read sketch file: {}",
-        &args.query_sketches[0]
-    ))?;
+    // calculate distances between reference sketches or index
+    if let Some(ref_sketches) = &args.reference_sketches {
+        // read sketch header to determine if we should
+        // calculate unweighted or weighted distances
+        let mut reader = maybe_gzip_reader(&args.query_sketches[0]).context(format!(
+            "Unable to read sketch file: {}",
+            &args.query_sketches[0]
+        ))?;
 
-    let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
+        let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
 
-    // calculate distances between sketches
-    if sketch_header.params.weighted() {
-        info!("Calculating weighted distances between sketches.");
-        calc_weighted_sketch_distances(
+        if sketch_header.params.weighted() {
+            info!("Calculating weighted distances between sketches.");
+            calc_weighted_sketch_distances(
+                &args.query_sketches,
+                ref_sketches,
+                args.min_ani,
+                &args.output_file,
+                args.threads,
+            )?;
+        } else {
+            info!("Calculating unweighted distances between sketches.");
+            calc_sketch_distances(
+                &args.query_sketches,
+                ref_sketches,
+                args.min_ani,
+                &args.output_file,
+                args.threads,
+            )?;
+        }
+    } else if let Some(ref_index) = &args.reference_index {
+        calc_sketch_distances_to_index(
             &args.query_sketches,
-            &args.reference_sketches,
+            ref_index,
             args.min_ani,
             &args.output_file,
-        )?;
-    } else {
-        info!("Calculating unweighted distances between sketches.");
-        calc_sketch_distances(
-            &args.query_sketches,
-            &args.reference_sketches,
-            args.min_ani,
-            &args.output_file,
+            args.threads,
         )?;
     }
 
@@ -220,21 +232,6 @@ fn run_index(args: &cli::IndexArgs) -> Result<()> {
     init(1)?;
 
     index_sketches(&args.sketches, &args.output_file)?;
-
-    Ok(())
-}
-
-/// Run the distance to index command.
-fn run_dist_by_index(args: &cli::DistByIndexArgs) -> Result<()> {
-    init(args.threads)?;
-
-    calc_sketch_distances_to_index(
-        &args.query_sketches,
-        &args.reference_index,
-        args.min_ani,
-        &args.output_file,
-        args.threads,
-    )?;
 
     Ok(())
 }
@@ -263,7 +260,7 @@ fn run_info(args: &cli::InfoArgs) -> Result<()> {
     let mut unique_hash_count_mean = 0.0f32;
     let mut weighted_hash_count_mean = 0.0f32;
     let scale_factor = 1.0 / sketches.len() as f32;
-    for sketch in sketches {
+    for sketch in sketches.into_iter() {
         sketch_info.push(SketchInfo {
             name: sketch.name().to_string(),
             bp_count: sketch.bp_count(),
@@ -306,7 +303,6 @@ fn main() -> Result<()> {
         Commands::Sketch(args) => run_sketch(args)?,
         Commands::Dist(args) => run_dist(args)?,
         Commands::Index(args) => run_index(args)?,
-        Commands::DistByIndex(args) => run_dist_by_index(args)?,
         Commands::Info(args) => run_info(args)?,
     }
 
