@@ -299,15 +299,21 @@ fn main() -> Result<()> {
     setup_logger();
 
     let cli = Cli::parse();
-    match &cli.command {
-        Commands::Sketch(args) => run_sketch(args)?,
-        Commands::Dist(args) => run_dist(args)?,
-        Commands::Index(args) => run_index(args)?,
-        Commands::Info(args) => run_info(args)?,
-    }
 
-    info!("Elapsed time (sec): {:.2}", start.elapsed().as_secs_f32());
-    info!("Done.");
+    if cli.markdown_help {
+        clap_markdown::print_help_markdown::<Cli>();
+    } else {
+        match &cli.command {
+            Some(Commands::Sketch(args)) => run_sketch(args)?,
+            Some(Commands::Dist(args)) => run_dist(args)?,
+            Some(Commands::Index(args)) => run_index(args)?,
+            Some(Commands::Info(args)) => run_info(args)?,
+            None => {}
+        }
+
+        info!("Elapsed time (sec): {:.2}", start.elapsed().as_secs_f32());
+        info!("Done.");
+    }
 
     Ok(())
 }

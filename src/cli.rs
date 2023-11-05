@@ -3,23 +3,32 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 #[command(disable_help_subcommand = true)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
+
+    // hidden command used to create CLI markdown
+    #[arg(long, hide = true)]
+    pub markdown_help: bool,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Create k-mer sketches for genomes
+    /// Create k-mer sketches for genomes.
+    #[command(arg_required_else_help = true)]
     Sketch(SketchArgs),
 
-    /// Create k-mer index from sketches
+    /// Create k-mer index from sketches.
+    #[command(arg_required_else_help = true)]
     Index(IndexArgs),
 
-    /// Compute distances between genome sketches
+    /// Compute distances between genome sketches.
+    #[command(arg_required_else_help = true)]
     Dist(DistArgs),
 
-    /// Display information about sketch file
+    /// Display information about sketch file.
+    #[command(arg_required_else_help = true)]
     Info(InfoArgs),
 }
 
