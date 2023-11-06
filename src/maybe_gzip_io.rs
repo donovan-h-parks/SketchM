@@ -1,10 +1,11 @@
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{stdout, BufRead, BufReader};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use anyhow::Result;
+use csv::Writer;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use gzp::syncz::{SyncZ, SyncZBuilder};
@@ -92,4 +93,29 @@ pub fn maybe_gzip_reader(filename: &str) -> Result<Box<dyn BufRead + Send>> {
     } else {
         Ok(Box::new(BufReader::with_capacity(BUFFER_SIZE, file)))
     }
+}
+
+/// Create CSV writer using multiple threads to compressing output
+/// if file name has a `gz` extension.
+pub fn maybe_gzip_csv_writer(
+    output_file: &Option<String>,
+    threads: usize,
+) -> Result<Writer<Box<dyn Write + Send>>> {
+    let writer: Box<dyn Write + Send> = match output_file {
+        Some(output_file) => {
+            let out_path = Path::new(output_file);
+            let out_file = File::create(out_path)?;
+            if out_path.extension() == Some(OsStr::new("gz")) {
+                let gzip_params = GzipParams { level: 2, threads };
+                Box::new(MaybeGzipWriter::new(out_file, Some(gzip_params)))
+            } else {
+                Box::new(out_file)
+            }
+        }
+        None => Box::new(stdout()),
+    };
+
+    Ok(csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_writer(writer))
 }

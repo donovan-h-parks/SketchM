@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
+use clap::CommandFactory;
 use clap::Parser;
 use log::info;
 use maybe_gzip_io::maybe_gzip_reader;
@@ -201,6 +202,7 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
                 &args.query_sketches,
                 ref_sketches,
                 args.min_ani,
+                args.additional_stats,
                 &args.output_file,
                 args.threads,
             )?;
@@ -210,6 +212,7 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
                 &args.query_sketches,
                 ref_sketches,
                 args.min_ani,
+                args.additional_stats,
                 &args.output_file,
                 args.threads,
             )?;
@@ -219,6 +222,8 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
             &args.query_sketches,
             ref_index,
             args.min_ani,
+            args.additional_stats,
+            args.single_genome_set,
             &args.output_file,
             args.threads,
         )?;
@@ -308,6 +313,9 @@ fn main() -> Result<()> {
             Some(Commands::Dist(args)) => run_dist(args)?,
             Some(Commands::Index(args)) => run_index(args)?,
             Some(Commands::Info(args)) => run_info(args)?,
+            Some(Commands::ShellCompletion { shell }) => {
+                shell.generate(&mut Cli::command(), &mut std::io::stdout());
+            }
             None => {}
         }
 

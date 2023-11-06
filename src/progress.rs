@@ -4,7 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 pub fn progress_bar(len: u64) -> ProgressBar {
     let progress_bar = ProgressBar::new(len);
     progress_bar.set_style(ProgressStyle::default_bar().template(
-        "[{elapsed_precise}] {bar:40.cyan/blue} {percent}% [{pos:>2}/{len:2}] [Remaining: {eta}]",
+        "[{elapsed_precise}] {bar:40.cyan/blue} {percent}% [{human_pos}/{human_len}] [Remaining: {eta}]",
     ).expect("Invalid progress style."));
 
     progress_bar
@@ -14,7 +14,7 @@ pub fn progress_bar(len: u64) -> ProgressBar {
 pub fn progress_bar_msg(len: u64) -> ProgressBar {
     let progress_bar = ProgressBar::new(len);
     progress_bar.set_style(ProgressStyle::default_bar().template(
-        "[{elapsed_precise}] {bar:20.cyan/blue} {percent}% [{pos:>2}/{len:2}] [Remaining: {eta}] [{msg}]",
+        "[{elapsed_precise}] {bar:20.cyan/blue} {percent}% [{human_pos}/{human_len}] [Remaining: {eta}] [{msg}]",
     ).expect("Invalid progress style."));
 
     progress_bar

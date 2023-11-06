@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
+#[command(styles=get_styles())]
 #[command(disable_help_subcommand = true)]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
@@ -15,21 +16,29 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Create k-mer sketches for genomes.
+    /// Create k-mer sketches for genomes
     #[command(arg_required_else_help = true)]
     Sketch(SketchArgs),
 
-    /// Create k-mer index from sketches.
+    /// Create k-mer index from sketches
     #[command(arg_required_else_help = true)]
     Index(IndexArgs),
 
-    /// Compute distances between genome sketches.
+    /// Compute distances between genome sketches
     #[command(arg_required_else_help = true)]
     Dist(DistArgs),
 
-    /// Display information about sketch file.
+    /// Display information about sketch file
     #[command(arg_required_else_help = true)]
     Info(InfoArgs),
+
+    /// Generate shell completion
+    #[command(arg_required_else_help = true, hide = true)]
+    ShellCompletion {
+        /// Shell to generate the completions for
+        #[arg(long, value_enum)]
+        shell: clap_complete_command::Shell,
+    },
 }
 
 #[derive(Parser)]
@@ -81,7 +90,7 @@ pub struct DistArgs {
     pub query_sketches: Vec<String>,
 
     /// Reference genome sketches
-    #[arg(short, long, value_delimiter = ' ', num_args = 1.., group= "reference", conflicts_with = "reference_index")]
+    #[arg(short, long, value_delimiter = ' ', num_args = 1.., group= "reference", conflicts_with = "reference_index", conflicts_with = "single_genome_set")]
     pub reference_sketches: Option<Vec<String>>,
 
     /// Reference k-mer index
@@ -92,9 +101,17 @@ pub struct DistArgs {
     #[arg(short, long)]
     pub output_file: Option<String>,
 
-    /// Only report ANI values above this threshold [0, 100]
+    /// Only report ANI values greater than or equal to this threshold [0, 100]
     #[arg(long, default_value_t = 0.01, value_parser = validate_ani)]
     pub min_ani: f64,
+
+    /// Report additional distance statistics
+    #[arg(long)]
+    pub additional_stats: bool,
+
+    /// Indicates query and reference genome sets are identical, and limits comparisons to lower triangle
+    #[arg(long)]
+    pub single_genome_set: bool,
 
     /// Number of threads to use
     #[arg(short, long, default_value_t = 1, value_parser = validate_threads)]
@@ -146,6 +163,42 @@ fn validate_ani(v: &str) -> Result<f64, String> {
     }
 
     Ok(v)
+}
+
+fn get_styles() -> clap::builder::Styles {
+    clap::builder::Styles::styled()
+        .usage(
+            anstyle::Style::new()
+                .bold()
+                .fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::White))),
+        )
+        .header(
+            anstyle::Style::new()
+                .bold()
+                .fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::White))),
+        )
+        .literal(
+            anstyle::Style::new().fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Green))),
+        )
+        .invalid(
+            anstyle::Style::new()
+                .bold()
+                .fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Red))),
+        )
+        .error(
+            anstyle::Style::new()
+                .bold()
+                .fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Red))),
+        )
+        .valid(
+            anstyle::Style::new()
+                .bold()
+                .underline()
+                .fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Green))),
+        )
+        .placeholder(
+            anstyle::Style::new().fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::White))),
+        )
 }
 
 #[test]
