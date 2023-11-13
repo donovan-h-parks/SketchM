@@ -1,6 +1,6 @@
 # Command-Line Help for `sketchm`
 
-This document contains the help content for the `sketchm` command-line program.
+This document contains the help content for the `SketchM` command-line program.
 
 **Command Overview:**
 
@@ -22,11 +22,6 @@ Fast genome ANI estimation using k-mer sketches.
 * `index` — Create k-mer index from sketches
 * `dist` — Compute distances between genome sketches
 * `info` — Display information about sketch file
-
-###### **Options:**
-
-* `--markdown-help`
-
 
 
 ## `sketchm sketch`
