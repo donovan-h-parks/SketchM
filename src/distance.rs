@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::LOCALE;
 use crate::hashing::ItemHash;
-use crate::index_sketches::{read_index, Index, IndexHeader};
+use crate::index_sketches::{read_index, Index};
 use crate::maybe_gzip_io::{maybe_gzip_csv_writer, maybe_gzip_reader};
 use crate::progress::progress_bar;
 use crate::sketch::{
@@ -65,121 +65,34 @@ pub struct WeightedDistances<'a> {
     pub containment_ref_weighted: f32,
 }
 
-/// Calculate distance statistics from sketch file to index.
-fn calc_sketch_file_to_index(
-    query_sketch_file: &str,
-    index_header: &IndexHeader,
+/// Calculate distance statistics from sketch to index.
+fn dist_sketch_to_index(
+    sketch: &Sketch,
     index: &Index,
+    k: u8,
     min_ani: f64,
     additional_stats: bool,
-    single_genome_set: bool,
-    safe_writer: &Mutex<Writer<Box<dyn Write + Send>>>,
-    num_pairs: &AtomicU64,
-) -> Result<()> {
-    let mut reader = maybe_gzip_reader(query_sketch_file)
-        .context(format!("Unable to read sketch file: {}", query_sketch_file))?;
-
-    let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
-    let k = sketch_header.params.k();
-
-    index_header
-        .params
-        .check_compatibility(&sketch_header.params)?;
-
-    let num_ref_genomes = index.genomes.len() as u32;
-
-    let progress_bar = progress_bar(sketch_header.num_sketches as u64);
-    iter::from_fn(move || bincode::deserialize_from(&mut reader).ok())
-        .enumerate()
-        .par_bridge()
-        .try_for_each(|(idx, sketch): (usize, SketchType)| {
-            let sketch = sketch.to_sketch();
-
-            let mut genome_stride_idx = num_ref_genomes;
-            if single_genome_set {
-                // optimize calculations by reporting only lower triangle
-                genome_stride_idx = idx as u32;
-
-                // sanity check the query and reference sets are identical
-                if sketch.name != index.genomes[idx].0 {
-                    bail!("Genome sets are not identical as required by `single-genome-set`.");
-                }
-            }
-
-            if additional_stats {
-                let dist_stats =
-                    unweighted_dists_to_index(&sketch, index, k, min_ani, genome_stride_idx);
-
-                num_pairs.fetch_add(dist_stats.len() as u64, atomic::Ordering::Acquire);
-
-                let mut locked_writer = safe_writer.lock().expect("Failed to obtain writer");
-                for ds in dist_stats {
-                    locked_writer.serialize(ds)?;
-                }
-            } else {
-                let ani_afs =
-                    unweighted_ani_to_index(&sketch, index, k, min_ani, genome_stride_idx);
-
-                num_pairs.fetch_add(ani_afs.len() as u64, atomic::Ordering::Acquire);
-
-                let mut locked_writer = safe_writer.lock().expect("Failed to obtain writer");
-                for ani_af in ani_afs {
-                    locked_writer.serialize(ani_af)?;
-                }
-            }
-
-            progress_bar.inc(1);
-
-            Ok(())
-        })?;
-
-    progress_bar.finish();
-
-    Ok(())
-}
-
-/// Calculate distance statistics from sequence file to index.
-fn calc_seq_file_to_index(
-    query_seq_file: &str,
-    sketch_params: &SketchParams,
-    index_header: &IndexHeader,
-    index: &Index,
-    min_ani: f64,
-    additional_stats: bool,
+    genome_stride_idx: u32,
     safe_writer: &Mutex<Writer<Box<dyn Write + Send>>>,
 ) -> Result<u64> {
-    let num_ref_genomes = index.genomes.len() as u32;
+    let num_pairs;
+    if additional_stats {
+        let dist_stats = unweighted_dists_to_index(sketch, index, k, min_ani, genome_stride_idx);
 
-    let (sketch_header, sketches) = read_or_generate_sketch(query_seq_file, sketch_params)?;
-    assert_eq!(sketches.len(), 1);
+        num_pairs = dist_stats.len() as u64;
 
-    let k = sketch_header.params.k();
+        let mut locked_writer = safe_writer.lock().expect("Failed to obtain writer");
+        for ds in dist_stats {
+            locked_writer.serialize(ds)?;
+        }
+    } else {
+        let ani_afs = unweighted_ani_to_index(sketch, index, k, min_ani, genome_stride_idx);
 
-    let mut num_pairs = 0;
-    let mut locked_writer = safe_writer.lock().expect("Failed to obtain writer");
-    for sketch in sketches {
-        let sketch = sketch.to_sketch();
+        num_pairs = ani_afs.len() as u64;
 
-        index_header
-            .params
-            .check_compatibility(&sketch_header.params)?;
-
-        if additional_stats {
-            let dist_stats = unweighted_dists_to_index(&sketch, index, k, min_ani, num_ref_genomes);
-
-            num_pairs += dist_stats.len() as u64;
-
-            for ds in dist_stats {
-                locked_writer.serialize(ds)?;
-            }
-        } else {
-            let ani_afs = unweighted_ani_to_index(&sketch, index, k, min_ani, num_ref_genomes);
-
-            num_pairs += ani_afs.len() as u64;
-
-            for ani_af in ani_afs {
-                locked_writer.serialize(ani_af)?;
-            }
+        let mut locked_writer = safe_writer.lock().expect("Failed to obtain writer");
+        for ani_af in ani_afs {
+            locked_writer.serialize(ani_af)?;
         }
     }
 
@@ -220,24 +133,68 @@ pub fn calc_sketch_distances_to_index(
     let num_pairs = AtomicU64::new(0);
     for query_file in query_files {
         if query_file.ends_with(SKETCH_EXT) {
-            calc_sketch_file_to_index(
-                query_file,
-                &index_header,
-                &index,
-                min_ani,
-                additional_stats,
-                single_genome_set,
-                &safe_writer,
-                &num_pairs,
-            )?;
+            let mut reader = maybe_gzip_reader(query_file)
+                .context(format!("Unable to read sketch file: {}", query_file))?;
+
+            let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
+
+            index_header
+                .params
+                .check_compatibility(&sketch_header.params)?;
+
+            let progress_bar = progress_bar(sketch_header.num_sketches as u64);
+            iter::from_fn(move || bincode::deserialize_from(&mut reader).ok())
+                .enumerate()
+                .par_bridge()
+                .try_for_each(|(idx, sketch): (usize, SketchType)| {
+                    let sketch = sketch.to_sketch();
+
+                    let mut genome_stride_idx = index.genomes.len() as u32;
+                    if single_genome_set {
+                        // optimize calculations by reporting only lower triangle
+                        genome_stride_idx = idx as u32;
+
+                        // sanity check the query and reference sets are identical
+                        if sketch.name != index.genomes[idx].0 {
+                            bail!(
+                                "Genome sets are not identical as required by `single-genome-set`."
+                            );
+                        }
+                    }
+
+                    let cur_num_pairs = dist_sketch_to_index(
+                        &sketch,
+                        &index,
+                        sketch_header.params.k(),
+                        min_ani,
+                        additional_stats,
+                        genome_stride_idx,
+                        &safe_writer,
+                    )?;
+
+                    num_pairs.fetch_add(cur_num_pairs, atomic::Ordering::Acquire);
+                    progress_bar.inc(1);
+                    Ok(())
+                })?;
+
+            progress_bar.finish();
         } else {
-            let cur_num_pairs = calc_seq_file_to_index(
-                query_file,
-                sketch_params,
-                &index_header,
+            let (sketch_header, mut sketches) = read_or_generate_sketch(query_file, sketch_params)?;
+
+            index_header
+                .params
+                .check_compatibility(&sketch_header.params)?;
+
+            assert_eq!(sketches.len(), 1);
+            let sketch = sketches.pop().unwrap().to_sketch();
+
+            let cur_num_pairs = dist_sketch_to_index(
+                &sketch,
                 &index,
+                sketch_header.params.k(),
                 min_ani,
                 additional_stats,
+                index.genomes.len() as u32,
                 &safe_writer,
             )?;
 
