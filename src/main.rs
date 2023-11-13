@@ -185,22 +185,26 @@ fn run_sketch(args: &cli::SketchArgs) -> Result<()> {
 fn run_dist(args: &cli::DistArgs) -> Result<()> {
     init(args.threads)?;
 
+    let sketch_params = SketchParams::new(args.kmer_length, args.scale, args.weighted);
+
     // calculate distances between reference sketches or index
-    if let Some(ref_sketches) = &args.reference_sketches {
-        // read sketch header to determine if we should
-        // calculate unweighted or weighted distances
-        let mut reader = maybe_gzip_reader(&args.query_sketches[0]).context(format!(
-            "Unable to read sketch file: {}",
-            &args.query_sketches[0]
-        ))?;
+    if let Some(ref_files) = &args.reference_files {
+        // determine if we are calculating weighted or unweighted
+        // distance calculations
+        let mut weighted = args.weighted;
+        if ref_files[0].ends_with(SKETCH_EXT) {
+            let mut reader = maybe_gzip_reader(&ref_files[0])
+                .context(format!("Unable to read file: {}", ref_files[0]))?;
+            let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
+            weighted = sketch_header.params.weighted();
+        }
 
-        let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
-
-        if sketch_header.params.weighted() {
+        if weighted {
             info!("Calculating weighted distances between sketches.");
             calc_weighted_sketch_distances(
-                &args.query_sketches,
-                ref_sketches,
+                &args.query_files,
+                ref_files,
+                &sketch_params,
                 args.min_ani,
                 args.additional_stats,
                 &args.output_file,
@@ -209,8 +213,9 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
         } else {
             info!("Calculating unweighted distances between sketches.");
             calc_sketch_distances(
-                &args.query_sketches,
-                ref_sketches,
+                &args.query_files,
+                ref_files,
+                &sketch_params,
                 args.min_ani,
                 args.additional_stats,
                 &args.output_file,
@@ -219,8 +224,9 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
         }
     } else if let Some(ref_index) = &args.reference_index {
         calc_sketch_distances_to_index(
-            &args.query_sketches,
+            &args.query_files,
             ref_index,
+            &sketch_params,
             args.min_ani,
             args.additional_stats,
             args.single_genome_set,

@@ -1,5 +1,9 @@
 use clap::{Parser, Subcommand};
 
+const DEFAULT_K: u8 = 31;
+const DEFAULT_SCALE: u64 = 1000;
+const DEFAULT_ANI_THRESHOLD: f64 = 0.01;
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 #[command(styles=get_styles())]
@@ -15,6 +19,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
+#[command(disable_help_subcommand = true)]
 pub enum Commands {
     /// Create k-mer sketches for genomes
     #[command(arg_required_else_help = true)]
@@ -44,28 +49,28 @@ pub enum Commands {
 #[derive(Parser)]
 pub struct SketchArgs {
     /// Genome FASTA/Q file(s) to sketch
-    #[arg(short = 'f', long, value_delimiter = ' ', num_args = 1.., group= "input")]
+    #[arg(short = 'f', long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., group= "input")]
     pub genome_files: Option<Vec<String>>,
 
     /// File indicating path to genome files to sketch (TSV: genome ID followed by path to FASTA file)
-    #[arg(short = 'p', long, group = "input")]
+    #[arg(short = 'p', long, help_heading = "Inputs", group = "input")]
     pub genome_path_file: Option<String>,
 
     /// Output sketch file
-    #[arg(short, long, requires = "input")]
+    #[arg(short, long, help_heading = "Output", requires = "input")]
     pub output_file: String,
 
-    /// Generated sketch indicating number of times each k-mer occurs
-    #[arg(short, long)]
-    pub weighted: bool,
-
     /// Length of k-mers to use
-    #[arg(short, long, default_value_t = 31, value_parser = validate_kmer_length)]
+    #[arg(short, long, help_heading = "Sketching parameters", default_value_t = DEFAULT_K, value_parser = validate_kmer_length)]
     pub kmer_length: u8,
 
     /// Sketch scaling factor
-    #[arg(short, long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
+    #[arg(short, long, help_heading = "Sketching parameters", default_value_t = DEFAULT_SCALE, value_parser = clap::value_parser!(u64).range(1..))]
     pub scale: u64,
+
+    /// Generated sketch indicating number of times each k-mer occurs
+    #[arg(short, long, help_heading = "Sketching parameters")]
+    pub weighted: bool,
 
     /// Number of threads to use
     #[arg(short, long, default_value_t = 1, value_parser = validate_threads)]
@@ -75,43 +80,55 @@ pub struct SketchArgs {
 #[derive(Parser)]
 pub struct IndexArgs {
     /// Genome sketches to index
-    #[arg(short, long, value_delimiter = ' ', num_args = 1.., required=true)]
+    #[arg(short, long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., required=true)]
     pub sketches: Vec<String>,
 
     /// Output index file
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Output")]
     pub output_file: String,
 }
 
 #[derive(Parser)]
 pub struct DistArgs {
-    /// Query genome sketches
-    #[arg(short, long, value_delimiter = ' ', num_args = 1.., required=true, requires = "reference")]
-    pub query_sketches: Vec<String>,
+    /// Query genome sketches or genome FASTA/Q file(s)
+    #[arg(short, long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., required=true, requires = "reference")]
+    pub query_files: Vec<String>,
 
-    /// Reference genome sketches
-    #[arg(short, long, value_delimiter = ' ', num_args = 1.., group= "reference", conflicts_with = "reference_index", conflicts_with = "single_genome_set")]
-    pub reference_sketches: Option<Vec<String>>,
+    /// Reference genome sketches or genome FASTA/Q file(s)
+    #[arg(short, long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., group= "reference", conflicts_with = "reference_index", conflicts_with = "single_genome_set")]
+    pub reference_files: Option<Vec<String>>,
 
     /// Reference k-mer index
-    #[arg(short = 'i', long, group = "reference")]
+    #[arg(short = 'i', long, help_heading = "Inputs", group = "reference")]
     pub reference_index: Option<String>,
 
     /// Output file [default: stdout]
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Output")]
     pub output_file: Option<String>,
 
     /// Only report ANI values greater than or equal to this threshold [0, 100]
-    #[arg(long, default_value_t = 0.01, value_parser = validate_ani)]
+    #[arg(long, help_heading = "Output", default_value_t = DEFAULT_ANI_THRESHOLD, value_parser = validate_ani)]
     pub min_ani: f64,
 
     /// Report additional distance statistics
-    #[arg(long)]
+    #[arg(long, help_heading = "Output")]
     pub additional_stats: bool,
 
     /// Indicates query and reference genome sets are identical, and limits comparisons to lower triangle
-    #[arg(long)]
+    #[arg(long, help_heading = "Output")]
     pub single_genome_set: bool,
+
+    /// Length of k-mers to use
+    #[arg(short, long, help_heading = "Sketching parameters", default_value_t = DEFAULT_K, value_parser = validate_kmer_length)]
+    pub kmer_length: u8,
+
+    /// Sketch scaling factor
+    #[arg(short, long, help_heading = "Sketching parameters", default_value_t = DEFAULT_SCALE, value_parser = clap::value_parser!(u64).range(1..))]
+    pub scale: u64,
+
+    /// Generated sketch indicating number of times each k-mer occurs
+    #[arg(short, long, help_heading = "Sketching parameters")]
+    pub weighted: bool,
 
     /// Number of threads to use
     #[arg(short, long, default_value_t = 1, value_parser = validate_threads)]
@@ -121,11 +138,11 @@ pub struct DistArgs {
 #[derive(Parser)]
 pub struct InfoArgs {
     /// Sketch file to query for information
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Inputs")]
     pub sketch_file: String,
 
     /// Output file [default: stdout]
-    #[arg(short, long)]
+    #[arg(short, long, help_heading = "Output")]
     pub output_file: Option<String>,
 }
 
