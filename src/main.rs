@@ -3,15 +3,19 @@ use std::fs::File;
 use std::io::stdout;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use clap::CommandFactory;
 use clap::Parser;
+use cli::genome_id_from_filename;
+use cli::sort_input_files;
 use log::info;
 use maybe_gzip_io::maybe_gzip_reader;
 use num_format::ToFormattedString;
 use serde::Serialize;
+use tempfile::NamedTempFile;
 
 use crate::cli::{Cli, Commands};
 use crate::config::LOCALE;
@@ -20,8 +24,9 @@ use crate::distance::{
 };
 use crate::genome::read_genome_path_file;
 use crate::index_sketches::index_sketches;
+use crate::io_utils::append_extension_to_path;
 use crate::logging::setup_logger;
-use crate::sketch::{read_sketch, sketch, SeqFile, SketchHeader, SKETCH_EXT};
+use crate::sketch::{read_sketches, sketch, SeqFile, SketchHeader, SKETCH_EXT};
 use crate::sketch_params::SketchParams;
 
 mod cli;
@@ -31,6 +36,7 @@ pub mod frac_min_hash;
 pub mod genome;
 pub mod hashing;
 pub mod index_sketches;
+pub mod io_utils;
 pub mod logging;
 pub mod maybe_gzip_io;
 pub mod progress;
@@ -51,42 +57,15 @@ fn init(threads: usize) -> Result<()> {
     Ok(())
 }
 
-/// Extract genome ID from input FASTA/Q file name.
-pub fn genome_id_from_filename(seq_file: &str) -> String {
-    let mut genome_id = Path::new(seq_file)
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-
-    if genome_id.ends_with(".gz") {
-        genome_id = genome_id.replace(".gz", "");
-    }
-
-    if genome_id.ends_with(".fq") {
-        genome_id = genome_id.replace(".fq", "");
-    } else if genome_id.ends_with(".fna") {
-        genome_id = genome_id.replace(".fna", "");
-    } else if genome_id.ends_with(".fa") {
-        genome_id = genome_id.replace(".fa", "");
-    } else if genome_id.ends_with(".fasta") {
-        genome_id = genome_id.replace(".fasta", "");
-    } else if genome_id.ends_with(".fastq") {
-        genome_id = genome_id.replace(".fastq", "");
-    }
-
-    genome_id
-}
-
 /// Get writer to stdout or to specified file with format indicate by file extension.
-fn output_results<T>(data: &[T], output_file: &Option<String>) -> Result<()>
+fn output_results<T>(data: &[T], output_file: &Option<PathBuf>) -> Result<()>
 where
     T: Serialize,
 {
     if let Some(output_file) = output_file {
         let path = Path::new(output_file);
         let writer = File::create(path)
-            .context(format!("Unable to create: {output_file}"))
+            .context(format!("Unable to create: {}", output_file.display()))
             .unwrap();
 
         match path.extension() {
@@ -165,12 +144,9 @@ fn run_sketch(args: &cli::SketchArgs) -> Result<()> {
         }
     }
 
-    let mut out_file = args.output_file.clone();
-    if !out_file.ends_with(SKETCH_EXT) {
-        out_file += SKETCH_EXT;
-    };
+    let out_file = append_extension_to_path(&args.output_file, SKETCH_EXT);
 
-    if let Some(out_path) = Path::new(&out_file).parent() {
+    if let Some(out_path) = out_file.parent() {
         std::fs::create_dir_all(out_path)?;
     }
 
@@ -187,24 +163,49 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
 
     let sketch_params = SketchParams::new(args.kmer_length, args.scale, args.weighted);
 
+    let (mut query_sketch_files, query_seq_files) = sort_input_files(&args.query_files);
+
+    // sketch any query sequence files to temporary sketch file
+    let tmp_query_sketch_file = if !query_seq_files.is_empty() {
+        Some(NamedTempFile::with_prefix("sketchm-")?)
+    } else {
+        None
+    };
+
+    if let Some(qry_sketch_file) = &tmp_query_sketch_file {
+        sketch(&query_seq_files, &sketch_params, qry_sketch_file.path())?;
+        query_sketch_files.push(qry_sketch_file.path().to_path_buf());
+    }
+
     // calculate distances between reference sketches or index
     if let Some(ref_files) = &args.reference_files {
-        // determine if we are calculating weighted or unweighted
-        // distance calculations
-        let mut weighted = args.weighted;
-        if ref_files[0].ends_with(SKETCH_EXT) {
-            let mut reader = maybe_gzip_reader(&ref_files[0])
-                .context(format!("Unable to read file: {}", ref_files[0]))?;
-            let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
-            weighted = sketch_header.params.weighted();
+        let (mut ref_sketch_files, ref_seq_files) = sort_input_files(ref_files);
+
+        // sketch any reference sequence files to temporary sketch file
+        let tmp_ref_sketch_file = if !ref_seq_files.is_empty() {
+            Some(NamedTempFile::with_prefix("sketchm-")?)
+        } else {
+            None
+        };
+
+        if let Some(ref_sketch_file) = &tmp_ref_sketch_file {
+            sketch(&ref_seq_files, &sketch_params, ref_sketch_file.path())?;
+            ref_sketch_files.push(ref_sketch_file.path().to_path_buf());
         }
 
-        if weighted {
+        // determine if we are calculating weighted or unweighted
+        // distance calculations
+        let mut reader = maybe_gzip_reader(&ref_sketch_files[0]).context(format!(
+            "Unable to read file: {}",
+            ref_sketch_files[0].display()
+        ))?;
+        let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
+
+        if sketch_header.params.weighted() {
             info!("Calculating weighted distances between sketches.");
             calc_weighted_sketch_distances(
-                &args.query_files,
-                ref_files,
-                &sketch_params,
+                &query_sketch_files,
+                &ref_sketch_files,
                 args.min_ani,
                 args.additional_stats,
                 &args.output_file,
@@ -213,9 +214,8 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
         } else {
             info!("Calculating unweighted distances between sketches.");
             calc_sketch_distances(
-                &args.query_files,
-                ref_files,
-                &sketch_params,
+                &query_sketch_files,
+                &ref_sketch_files,
                 args.min_ani,
                 args.additional_stats,
                 &args.output_file,
@@ -224,9 +224,8 @@ fn run_dist(args: &cli::DistArgs) -> Result<()> {
         }
     } else if let Some(ref_index) = &args.reference_index {
         calc_sketch_distances_to_index(
-            &args.query_files,
+            &query_sketch_files,
             ref_index,
-            &sketch_params,
             args.min_ani,
             args.additional_stats,
             args.single_genome_set,
@@ -251,7 +250,7 @@ fn run_index(args: &cli::IndexArgs) -> Result<()> {
 fn run_info(args: &cli::InfoArgs) -> Result<()> {
     init(1)?;
 
-    let (sketch_header, sketches) = read_sketch(&args.sketch_file)?;
+    let (sketch_header, sketches) = read_sketches(&args.sketch_file)?;
 
     #[derive(Serialize)]
     struct SketchInfo {

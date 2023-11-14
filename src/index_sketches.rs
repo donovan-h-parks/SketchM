@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 use ahash::HashMap;
 use anyhow::{Context, Result};
@@ -10,13 +11,14 @@ use tinyvec::TinyVec;
 
 use crate::config::LOCALE;
 use crate::hashing::ItemHash;
+use crate::io_utils::append_extension_to_path;
 use crate::maybe_gzip_io::maybe_gzip_reader;
 use crate::progress::progress_bar;
 use crate::sketch::{SketchHeader, SketchType};
 use crate::sketch_params::SketchParams;
 
 pub const INDEX_VERSION: &str = "1";
-pub const INDEX_EXT: &str = ".idx";
+pub const INDEX_EXT: &str = "idx";
 
 /// Structure for determining all genomes with a given k-mer.
 // Genomes are stored as a vector where their index in the vector is the
@@ -79,7 +81,7 @@ where
 }
 
 /// Create index indicating all genomes with a given k-mer.
-pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> {
+pub fn index_sketches(sketch_files: &[PathBuf], output_file: &Path) -> Result<()> {
     let mut index = Index::default();
 
     // add all sketches from all sketch files to the index
@@ -88,8 +90,10 @@ pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> 
     for sketch_file in sketch_files {
         info!("Adding sketches to k-mer index:");
 
-        let mut reader = maybe_gzip_reader(sketch_file)
-            .context(format!("Unable to read sketch file: {}", sketch_file))?;
+        let mut reader = maybe_gzip_reader(sketch_file).context(format!(
+            "Unable to read sketch file: {}",
+            sketch_file.display()
+        ))?;
 
         let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
         let num_sketches = sketch_header.num_sketches as u64;
@@ -160,12 +164,9 @@ pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> 
 
     // write out index
     info!("Writing index to file.");
-    let mut out_file = output_file.to_string();
-    if !out_file.ends_with(INDEX_EXT) {
-        out_file += INDEX_EXT;
-    };
+    let output_file = append_extension_to_path(output_file, INDEX_EXT);
 
-    let fp = File::create(out_file)?;
+    let fp = File::create(output_file)?;
     let mut writer = BufWriter::new(fp);
     write_index_header(
         &mut writer,
@@ -178,9 +179,11 @@ pub fn index_sketches(sketch_files: &[String], output_file: &str) -> Result<()> 
 }
 
 /// Read index.
-pub fn read_index(index_file: &str) -> Result<(IndexHeader, Index)> {
-    let mut reader = maybe_gzip_reader(index_file)
-        .context(format!("Unable to read index file: {}", index_file))?;
+pub fn read_index(index_path: &Path) -> Result<(IndexHeader, Index)> {
+    let mut reader = maybe_gzip_reader(index_path).context(format!(
+        "Unable to read index file: {}",
+        index_path.display()
+    ))?;
 
     let index_header: IndexHeader = bincode::deserialize_from(&mut reader)?;
     let index: Index = bincode::deserialize_from(&mut reader)?;

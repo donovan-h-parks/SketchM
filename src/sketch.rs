@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
@@ -12,21 +12,20 @@ use needletail::parse_fastx_reader;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
-use crate::genome_id_from_filename;
 use crate::hashing::ItemHash;
 use crate::maybe_gzip_io::maybe_gzip_reader;
 use crate::progress::progress_bar;
 use crate::sketch_params::SketchParams;
 
 pub const SKETCH_VERSION: &str = "1";
-pub const SKETCH_EXT: &str = ".sk";
+pub const SKETCH_EXT: &str = "sk";
 
 pub type KmerCount = u16;
 
 #[derive(Debug)]
 pub struct SeqFile {
     pub id: String,
-    pub file: String,
+    pub file: PathBuf,
 }
 
 /// Header information for a sketch file.
@@ -186,7 +185,7 @@ where
 pub fn sketch(
     genome_files: &Vec<SeqFile>,
     sketch_params: &SketchParams,
-    output_file: &str,
+    output_file: &Path,
 ) -> Result<()> {
     let fp = File::create(output_file)?;
     let mut writer = BufWriter::new(fp);
@@ -230,8 +229,8 @@ pub fn sketch(
 /// Create sketch from sequence file.
 pub fn sketch_file(seq_file: &SeqFile, sketch_params: &SketchParams) -> Result<SketchType> {
     let mut sketcher = sketch_params.create_sketcher();
-    let reader = File::open(Path::new(&seq_file.file))
-        .context(format!("Failed to open {}", seq_file.file))?;
+    let reader = File::open(&seq_file.file)
+        .context(format!("Failed to open {}", seq_file.file.display()))?;
 
     let mut fastx_reader = parse_fastx_reader(reader)?;
     while let Some(rec) = fastx_reader.next() {
@@ -248,36 +247,12 @@ pub fn sketch_file(seq_file: &SeqFile, sketch_params: &SketchParams) -> Result<S
     Ok(SketchType::Unweighted(sketcher.to_sketch(&seq_file.id)))
 }
 
-/// Read sketch from sketch file or generate sketch from sequence file.
-pub fn read_or_generate_sketch(
-    input_file: &str,
-    sketch_params: &SketchParams,
-) -> Result<(SketchHeader, Vec<SketchType>)> {
-    if input_file.ends_with(SKETCH_EXT) {
-        // return sketches in sketch file
-        return read_sketch(input_file);
-    }
-
-    // generate sketch from input sequence file
-    let seq_id = genome_id_from_filename(input_file);
-    let seq_file = SeqFile {
-        id: seq_id,
-        file: input_file.to_string(),
-    };
-
-    let mut sketches = Vec::new();
-    let sketch = sketch_file(&seq_file, sketch_params)?;
-    sketches.push(sketch);
-
-    let sketch_header = create_sketch_header(1, sketch_params);
-
-    Ok((sketch_header, sketches))
-}
-
-/// Read sketches for sketch file.
-pub fn read_sketch(sketch_file: &str) -> Result<(SketchHeader, Vec<SketchType>)> {
-    let mut reader = maybe_gzip_reader(sketch_file)
-        .context(format!("Unable to read sketch file: {}", sketch_file))?;
+/// Read sketches in sketch file.
+pub fn read_sketches(sketch_file: &Path) -> Result<(SketchHeader, Vec<SketchType>)> {
+    let mut reader = maybe_gzip_reader(sketch_file).context(format!(
+        "Unable to read sketch file: {}",
+        sketch_file.display()
+    ))?;
 
     let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
 

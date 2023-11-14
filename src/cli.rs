@@ -1,4 +1,11 @@
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
+
 use clap::{Parser, Subcommand};
+
+use crate::sketch::{SeqFile, SKETCH_EXT};
 
 const DEFAULT_K: u8 = 31;
 const DEFAULT_SCALE: u64 = 1000;
@@ -50,15 +57,15 @@ pub enum Commands {
 pub struct SketchArgs {
     /// Genome FASTA/Q file(s) to sketch
     #[arg(short = 'f', long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., group= "input")]
-    pub genome_files: Option<Vec<String>>,
+    pub genome_files: Option<Vec<PathBuf>>,
 
     /// File indicating path to genome files to sketch (TSV: genome ID followed by path to FASTA file)
     #[arg(short = 'p', long, help_heading = "Inputs", group = "input")]
-    pub genome_path_file: Option<String>,
+    pub genome_path_file: Option<PathBuf>,
 
     /// Output sketch file
     #[arg(short, long, help_heading = "Output", requires = "input")]
-    pub output_file: String,
+    pub output_file: PathBuf,
 
     /// Length of k-mers to use
     #[arg(short, long, help_heading = "Sketching parameters", default_value_t = DEFAULT_K, value_parser = validate_kmer_length)]
@@ -81,30 +88,30 @@ pub struct SketchArgs {
 pub struct IndexArgs {
     /// Genome sketches to index
     #[arg(short, long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., required=true)]
-    pub sketches: Vec<String>,
+    pub sketches: Vec<PathBuf>,
 
     /// Output index file
     #[arg(short, long, help_heading = "Output")]
-    pub output_file: String,
+    pub output_file: PathBuf,
 }
 
 #[derive(Parser)]
 pub struct DistArgs {
     /// Query genome sketches or genome FASTA/Q file(s)
     #[arg(short, long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., required=true, requires = "reference")]
-    pub query_files: Vec<String>,
+    pub query_files: Vec<PathBuf>,
 
     /// Reference genome sketches or genome FASTA/Q file(s)
     #[arg(short, long, help_heading = "Inputs", value_delimiter = ' ', num_args = 1.., group= "reference", conflicts_with = "reference_index", conflicts_with = "single_genome_set")]
-    pub reference_files: Option<Vec<String>>,
+    pub reference_files: Option<Vec<PathBuf>>,
 
     /// Reference k-mer index
     #[arg(short = 'i', long, help_heading = "Inputs", group = "reference")]
-    pub reference_index: Option<String>,
+    pub reference_index: Option<PathBuf>,
 
     /// Output file [default: stdout]
     #[arg(short, long, help_heading = "Output")]
-    pub output_file: Option<String>,
+    pub output_file: Option<PathBuf>,
 
     /// Only report ANI values greater than or equal to this threshold [0, 100]
     #[arg(long, help_heading = "Output", default_value_t = DEFAULT_ANI_THRESHOLD, value_parser = validate_ani)]
@@ -139,11 +146,57 @@ pub struct DistArgs {
 pub struct InfoArgs {
     /// Sketch file to query for information
     #[arg(short, long, help_heading = "Inputs")]
-    pub sketch_file: String,
+    pub sketch_file: PathBuf,
 
     /// Output file [default: stdout]
     #[arg(short, long, help_heading = "Output")]
-    pub output_file: Option<String>,
+    pub output_file: Option<PathBuf>,
+}
+
+/// Extract genome ID from input FASTA/Q file name.
+pub fn genome_id_from_filename(seq_file: &Path) -> String {
+    let mut genome_id = seq_file.file_name().unwrap().to_string_lossy().to_string();
+
+    if genome_id.ends_with(".gz") {
+        genome_id = genome_id.replace(".gz", "");
+    }
+
+    if genome_id.ends_with(".fq") {
+        genome_id = genome_id.replace(".fq", "");
+    } else if genome_id.ends_with(".fna") {
+        genome_id = genome_id.replace(".fna", "");
+    } else if genome_id.ends_with(".fa") {
+        genome_id = genome_id.replace(".fa", "");
+    } else if genome_id.ends_with(".fasta") {
+        genome_id = genome_id.replace(".fasta", "");
+    } else if genome_id.ends_with(".fastq") {
+        genome_id = genome_id.replace(".fastq", "");
+    }
+
+    genome_id
+}
+
+/// Sort input files into sketches and sequence files
+pub fn sort_input_files(input_files: &Vec<PathBuf>) -> (Vec<PathBuf>, Vec<SeqFile>) {
+    let mut sketch_files = Vec::new();
+    let mut seq_files = Vec::new();
+
+    for input_file in input_files {
+        if input_file.extension() == Some(OsStr::new(SKETCH_EXT)) {
+            sketch_files.push(input_file.clone());
+        } else {
+            let seq_id = genome_id_from_filename(input_file);
+
+            let seq_file = SeqFile {
+                id: seq_id,
+                file: input_file.clone(),
+            };
+
+            seq_files.push(seq_file);
+        }
+    }
+
+    (sketch_files, seq_files)
 }
 
 fn validate_kmer_length(k: &str) -> Result<u8, String> {

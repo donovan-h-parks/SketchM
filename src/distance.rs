@@ -1,6 +1,7 @@
 use std::cmp::{max, min, Ordering};
 use std::io::Write;
 use std::iter;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::Mutex;
 
@@ -17,10 +18,7 @@ use crate::hashing::ItemHash;
 use crate::index_sketches::{read_index, Index};
 use crate::maybe_gzip_io::{maybe_gzip_csv_writer, maybe_gzip_reader};
 use crate::progress::progress_bar;
-use crate::sketch::{
-    read_or_generate_sketch, Sketch, SketchHeader, SketchType, WeightedSketch, SKETCH_EXT,
-};
-use crate::sketch_params::SketchParams;
+use crate::sketch::{read_sketches, Sketch, SketchHeader, SketchType, WeightedSketch};
 
 /// ANI and AF between two unweighted or weighted sketches.
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,13 +99,12 @@ fn dist_sketch_to_index(
 
 /// Calculate unweighted distances between query sketches and a reference index.
 pub fn calc_sketch_distances_to_index(
-    query_files: &[String],
-    reference_index: &str,
-    sketch_params: &SketchParams,
+    query_sketch_files: &[PathBuf],
+    reference_index: &Path,
     min_ani: f64,
     additional_stats: bool,
     single_genome_set: bool,
-    output_file: &Option<String>,
+    output_file: &Option<PathBuf>,
     threads: usize,
 ) -> Result<()> {
     // load reference index
@@ -131,75 +128,52 @@ pub fn calc_sketch_distances_to_index(
     info!("Calculating ANI between query sketches and reference index.");
     let safe_writer = Mutex::new(writer);
     let num_pairs = AtomicU64::new(0);
-    for query_file in query_files {
-        if query_file.ends_with(SKETCH_EXT) {
-            let mut reader = maybe_gzip_reader(query_file)
-                .context(format!("Unable to read sketch file: {}", query_file))?;
+    for query_sketch_file in query_sketch_files {
+        let mut reader = maybe_gzip_reader(query_sketch_file).context(format!(
+            "Unable to read sketch file: {}",
+            query_sketch_file.display()
+        ))?;
 
-            let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
+        let sketch_header: SketchHeader = bincode::deserialize_from(&mut reader)?;
 
-            index_header
-                .params
-                .check_compatibility(&sketch_header.params)?;
+        index_header
+            .params
+            .check_compatibility(&sketch_header.params)?;
 
-            let progress_bar = progress_bar(sketch_header.num_sketches as u64);
-            iter::from_fn(move || bincode::deserialize_from(&mut reader).ok())
-                .enumerate()
-                .par_bridge()
-                .try_for_each(|(idx, sketch): (usize, SketchType)| {
-                    let sketch = sketch.to_sketch();
+        let progress_bar = progress_bar(sketch_header.num_sketches as u64);
+        iter::from_fn(move || bincode::deserialize_from(&mut reader).ok())
+            .enumerate()
+            .par_bridge()
+            .try_for_each(|(idx, sketch): (usize, SketchType)| {
+                let sketch = sketch.to_sketch();
 
-                    let mut genome_stride_idx = index.genomes.len() as u32;
-                    if single_genome_set {
-                        // optimize calculations by reporting only lower triangle
-                        genome_stride_idx = idx as u32;
+                let mut genome_stride_idx = index.genomes.len() as u32;
+                if single_genome_set {
+                    // optimize calculations by reporting only lower triangle
+                    genome_stride_idx = idx as u32;
 
-                        // sanity check the query and reference sets are identical
-                        if sketch.name != index.genomes[idx].0 {
-                            bail!(
-                                "Genome sets are not identical as required by `single-genome-set`."
-                            );
-                        }
+                    // sanity check the query and reference sets are identical
+                    if sketch.name != index.genomes[idx].0 {
+                        bail!("Genome sets are not identical as required by `single-genome-set`.");
                     }
+                }
 
-                    let cur_num_pairs = dist_sketch_to_index(
-                        &sketch,
-                        &index,
-                        sketch_header.params.k(),
-                        min_ani,
-                        additional_stats,
-                        genome_stride_idx,
-                        &safe_writer,
-                    )?;
+                let cur_num_pairs = dist_sketch_to_index(
+                    &sketch,
+                    &index,
+                    sketch_header.params.k(),
+                    min_ani,
+                    additional_stats,
+                    genome_stride_idx,
+                    &safe_writer,
+                )?;
 
-                    num_pairs.fetch_add(cur_num_pairs, atomic::Ordering::Acquire);
-                    progress_bar.inc(1);
-                    Ok(())
-                })?;
+                num_pairs.fetch_add(cur_num_pairs, atomic::Ordering::Acquire);
+                progress_bar.inc(1);
+                Ok(())
+            })?;
 
-            progress_bar.finish();
-        } else {
-            let (sketch_header, mut sketches) = read_or_generate_sketch(query_file, sketch_params)?;
-
-            index_header
-                .params
-                .check_compatibility(&sketch_header.params)?;
-
-            assert_eq!(sketches.len(), 1);
-            let sketch = sketches.pop().unwrap().to_sketch();
-
-            let cur_num_pairs = dist_sketch_to_index(
-                &sketch,
-                &index,
-                sketch_header.params.k(),
-                min_ani,
-                additional_stats,
-                index.genomes.len() as u32,
-                &safe_writer,
-            )?;
-
-            num_pairs.fetch_add(cur_num_pairs, atomic::Ordering::Acquire);
-        }
+        progress_bar.finish();
     }
 
     info!(
@@ -337,20 +311,19 @@ fn unweighted_ani_to_index<'a>(
 
 /// Calculate unweighted distance statistics between query and reference sketches.
 pub fn calc_sketch_distances(
-    query_files: &[String],
-    ref_files: &[String],
-    sketch_params: &SketchParams,
+    query_sketch_files: &[PathBuf],
+    ref_sketch_files: &[PathBuf],
     min_ani: f64,
     additional_stats: bool,
-    output_file: &Option<String>,
+    output_file: &Option<PathBuf>,
     threads: usize,
 ) -> Result<()> {
     // load all query sketches into memory
     info!("Loading query sketches into memory.");
     let mut prev_sketch_header: Option<SketchHeader> = None;
     let mut query_sketches = Vec::new();
-    for query_file in query_files {
-        let (sketch_header, sketches) = read_or_generate_sketch(query_file, sketch_params)?;
+    for query_sketch_file in query_sketch_files {
+        let (sketch_header, sketches) = read_sketches(query_sketch_file)?;
         match prev_sketch_header {
             Some(ref header) => {
                 header.params.check_compatibility(&sketch_header.params)?;
@@ -366,8 +339,8 @@ pub fn calc_sketch_distances(
     // load all reference sketches into memory
     info!("Loading reference sketches into memory.");
     let mut ref_sketches = Vec::new();
-    for ref_file in ref_files {
-        let (sketch_header, sketches) = read_or_generate_sketch(ref_file, sketch_params)?;
+    for ref_sketch_file in ref_sketch_files {
+        let (sketch_header, sketches) = read_sketches(ref_sketch_file)?;
         if let Some(ref header) = prev_sketch_header {
             header.params.check_compatibility(&sketch_header.params)?;
         }
@@ -425,20 +398,19 @@ pub fn calc_sketch_distances(
 // replication of code, but the explicit use of Sketch and WeightedSketch (i.e.
 // the inner types of SketchType) increase performance by ~20%.
 pub fn calc_weighted_sketch_distances(
-    query_files: &[String],
-    ref_files: &[String],
-    sketch_params: &SketchParams,
+    query_sketch_files: &[PathBuf],
+    ref_sketch_files: &[PathBuf],
     min_ani: f64,
     additional_stats: bool,
-    output_file: &Option<String>,
+    output_file: &Option<PathBuf>,
     threads: usize,
 ) -> Result<()> {
     // load all query sketches into memory
     info!("Loading query sketches into memory:");
     let mut prev_sketch_header: Option<SketchHeader> = None;
     let mut query_sketches = Vec::new();
-    for query_file in query_files {
-        let (sketch_header, sketches) = read_or_generate_sketch(query_file, sketch_params)?;
+    for query_sketch_file in query_sketch_files {
+        let (sketch_header, sketches) = read_sketches(query_sketch_file)?;
         match prev_sketch_header {
             Some(ref header) => {
                 header.params.check_compatibility(&sketch_header.params)?;
@@ -454,8 +426,8 @@ pub fn calc_weighted_sketch_distances(
     // load all reference sketches into memory
     info!("Loading reference sketches into memory:");
     let mut ref_sketches = Vec::new();
-    for ref_file in ref_files {
-        let (sketch_header, sketches) = read_or_generate_sketch(ref_file, sketch_params)?;
+    for ref_sketch_file in ref_sketch_files {
+        let (sketch_header, sketches) = read_sketches(ref_sketch_file)?;
         if let Some(ref header) = prev_sketch_header {
             header.params.check_compatibility(&sketch_header.params)?;
         }

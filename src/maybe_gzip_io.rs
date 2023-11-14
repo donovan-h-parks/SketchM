@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{stdout, BufRead, BufReader};
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use csv::Writer;
@@ -81,8 +81,7 @@ impl<T: Write> Write for MaybeGzipWriter<T> {
 
 /// Read normal or compressed files based on the absence
 /// or presence of a `gz` extension.
-pub fn maybe_gzip_reader(filename: &str) -> Result<Box<dyn BufRead + Send>> {
-    let path = Path::new(filename);
+pub fn maybe_gzip_reader(path: &Path) -> Result<Box<dyn BufRead + Send>> {
     let file = File::open(path)?;
 
     if path.extension() == Some(OsStr::new("gz")) {
@@ -98,14 +97,13 @@ pub fn maybe_gzip_reader(filename: &str) -> Result<Box<dyn BufRead + Send>> {
 /// Create CSV writer using multiple threads to compressing output
 /// if file name has a `gz` extension.
 pub fn maybe_gzip_csv_writer(
-    output_file: &Option<String>,
+    output_path: &Option<PathBuf>,
     threads: usize,
 ) -> Result<Writer<Box<dyn Write + Send>>> {
-    let writer: Box<dyn Write + Send> = match output_file {
-        Some(output_file) => {
-            let out_path = Path::new(output_file);
-            let out_file = File::create(out_path)?;
-            if out_path.extension() == Some(OsStr::new("gz")) {
+    let writer: Box<dyn Write + Send> = match output_path {
+        Some(output_path) => {
+            let out_file = File::create(output_path)?;
+            if output_path.extension() == Some(OsStr::new("gz")) {
                 let gzip_params = GzipParams { level: 2, threads };
                 Box::new(MaybeGzipWriter::new(out_file, Some(gzip_params)))
             } else {
